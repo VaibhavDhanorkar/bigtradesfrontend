@@ -6,41 +6,56 @@
 
     <!-- PWA / iOS -->
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#0A0B0F" />
+    <meta name="theme-color" content="#FAF8F5" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="SignalPro" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="BigTrades" />
     <link rel="apple-touch-icon" href="/icon-180.png" />
-
-    <!-- Favicon fallback -->
     <link rel="icon" type="image/png" href="/icon-192.png" />
 
-    <title>StockSignalPro</title>
+    <title>BigTrades</title>
 
     <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body, #root {
+      /* ─── IVORY THEME BASE ── matches T.bg exactly ─── */
+      *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
         height: 100%;
-        background: #0A0B0F;
-        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+        background: #FAF8F5;          /* ivory — matches T.bg */
+        color: #1C1917;               /* matches T.txt */
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
         overflow-x: hidden;
+      }
+      #root {
+        min-height: 100%;
+        background: #FAF8F5;
+      }
+      /* Loading spinner shown while React bundle loads */
+      #root:empty::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: #FAF8F5;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      /* Prevent flash of unstyled content */
+      #root:empty {
+        background: #FAF8F5;
       }
     </style>
   </head>
   <body>
     <div id="root"></div>
-
-    <!-- Vite entry -->
     <script type="module" src="/src/main.jsx"></script>
-
-    <!-- Service Worker registration -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('SW registered:', reg.scope))
-            .catch(err => console.warn('SW failed:', err));
+            .then(r => console.log('SW registered:', r.scope))
+            .catch(e => console.warn('SW failed:', e));
         });
       }
     </script>
