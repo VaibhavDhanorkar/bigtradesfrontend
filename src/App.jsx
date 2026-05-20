@@ -69,7 +69,7 @@ const fmtPct = (val) => {
   const n = Number(val);
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
   if (val===undefined||val===null||val===""||isNaN(Number(val))) return "—";
-  const n=Number(val); return `${n>=0?"+":""}${n.toFixed(1)}%`;
+  return `${n>=0?"+":""}${n.toFixed(1)}%`;
 };
 const fmtRR = (val) => {
   if (val === undefined || val === null || isNaN(Number(val))) return "—";
