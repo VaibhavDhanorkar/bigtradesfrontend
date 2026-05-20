@@ -2044,7 +2044,7 @@ const BottomNav = ({active,onChange})=>(
       </button>
     ))}
   </div>
-@ -1053,85 +1410,85 @@ const BottomNav = ({active,onChange}) => (
+const BottomNav = ({active,onChange}) => (
 export default function App() {
   const [screen,setScreen]     = useState("home");
   const [selected,setSelected] = useState(null);
