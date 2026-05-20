@@ -59,21 +59,21 @@ const T = {
 const fmt = (val, decimals = 2, prefix = "$") => {
   if (val === undefined || val === null || val === "" || isNaN(Number(val))) return "—";
   return `${prefix}${Number(val).toFixed(decimals)}`;
+
 // ─── SAFE FORMATTERS ─────────────────────────────────────────────────────────
-const fmt = (val, dp=2, pre="$") => {
-  if (val===undefined||val===null||val===""||isNaN(Number(val))) return "—";
+const fmt = (val, dp = 2, pre = "$") => {
+  if (val === undefined || val === null || val === "" || isNaN(Number(val))) return "—";
   return `${pre}${Number(val).toFixed(dp)}`;
 };
+
 const fmtPct = (val) => {
   if (val === undefined || val === null || val === "" || isNaN(Number(val))) return "—";
   const n = Number(val);
   return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
-  if (val===undefined||val===null||val===""||isNaN(Number(val))) return "—";
-  return `${n>=0?"+":""}${n.toFixed(1)}%`;
 };
+
 const fmtRR = (val) => {
-  if (val === undefined || val === null || isNaN(Number(val))) return "—";
-  if (!val||isNaN(Number(val))) return "—";
+  if (val === undefined || val === null || val === "" || isNaN(Number(val))) return "—";
   return `${Number(val).toFixed(1)}:1`;
 };
 
@@ -88,13 +88,13 @@ const api = {
       console.warn(`API GET ${path} failed:`, e.message);
       return null;
     }
-    try { const r=await fetch(`${API_BASE}${path}`); if(!r.ok) throw new Error(`${r.status}`); return r.json(); }
-    catch(e){ console.warn(`GET ${path}:`,e.message); return null; }
   },
   async post(path, body) {
     try {
       const r = await fetch(`${API_BASE}${path}`, {
-        method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return await r.json();
@@ -102,10 +102,7 @@ const api = {
       console.warn(`API POST ${path} failed:`, e.message);
       return null;
     }
-  async post(path,body) {
-    try { const r=await fetch(`${API_BASE}${path}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(`${r.status}`); return r.json(); }
-    catch(e){ console.warn(`POST ${path}:`,e.message); return null; }
-  },
+  }
 };
 
 // ─── WEBSOCKET HOOK ───────────────────────────────────────────────────────────
