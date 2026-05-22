@@ -131,6 +131,61 @@ const levelBadge = l => ({
 const tierColor  = t => ({NANO:T.red,SMALL:T.amb,MID:T.acc,LARGE:T.grn,ETF:T.pur}[t]||T.mut);
 const tierBg     = t => ({NANO:T.redLight,SMALL:T.ambLight,MID:T.accLight,LARGE:T.grnLight,ETF:T.purLight}[t]||T.bgEl);
 
+// ─── MARKET HOURS UTILITY ─────────────────────────────────────────────────────
+// Strategy B: detect off-hours so the UI can show staleness banner + manual refresh
+const ET_OFFSET_MS = -5 * 60 * 60 * 1000; // ET is UTC-5 (approximation; DST ignored, safe for UX)
+function getNowET() {
+  const now = new Date();
+  return new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + ET_OFFSET_MS);
+}
+function isMarketOpen() {
+  const et = getNowET();
+  const day = et.getDay(); // 0=Sun, 6=Sat
+  const h = et.getHours(), m = et.getMinutes();
+  const minuteOfDay = h * 60 + m;
+  return day >= 1 && day <= 5 && minuteOfDay >= 570 && minuteOfDay < 960; // 9:30–16:00 ET Mon-Fri
+}
+function getNextMarketOpen() {
+  const et = getNowET();
+  const day = et.getDay();
+  const h = et.getHours(), m = et.getMinutes();
+  const minuteOfDay = h * 60 + m;
+  // Calculate days until next Monday (or today if weekday before open)
+  if (day === 0) return "Monday 9:30 AM ET";
+  if (day === 6) return "Monday 9:30 AM ET";
+  if (day >= 1 && day <= 5 && minuteOfDay < 570) return "Today 9:30 AM ET";
+  if (day >= 1 && day <= 4 && minuteOfDay >= 960) return "Tomorrow 9:30 AM ET";
+  if (day === 5 && minuteOfDay >= 960) return "Monday 9:30 AM ET";
+  return "Next market day";
+}
+function fmtRelTime(isoStr) {
+  if (!isoStr) return null;
+  const diff = Date.now() - new Date(isoStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs/24)}d ago`;
+}
+
+// ─── STICKY SCREEN WRAPPER ────────────────────────────────────────────────────
+// Shared layout: sticky header + scrollable content below.
+// Used by ALL tab screens so behaviour is consistent across the app.
+const StickyScreen = ({header, children})=>(
+  <div style={{display:"flex",flexDirection:"column",height:"calc(100dvh - env(safe-area-inset-top,0px) - 58px)"}}>
+    {/* Sticky header — never scrolls */}
+    <div style={{flexShrink:0,position:"sticky",top:0,zIndex:90,
+      background:T.bgCard,borderBottom:`1px solid ${T.bdr}`,boxShadow:T.shadow}}>
+      {header}
+    </div>
+    {/* Scrollable body */}
+    <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+      {children}
+    </div>
+  </div>
+);
+
 // ─── PRIMITIVES ───────────────────────────────────────────────────────────────
 const Sparkline = ({data=[],color,h=36,w=80})=>{
   if(!data?.length) return null;
@@ -610,11 +665,19 @@ const SignalCard = ({signal:s,onClick})=>{
 };
 
 // ─── HOME SCREEN ─────────────────────────────────────────────────────────────
-const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizon})=>{
+const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizon,onManualRefresh,refreshing})=>{
   const [filter,setFilter]=useState("ALL");
   const [search,setSearch]=useState("");
   const [showFeatures,setShowFeatures]=useState(false);
+  const [showModeInfo,setShowModeInfo]=useState(false); // A2: hidden by default, toggled by ℹ️
   const tiers=["ALL","SMALL","MID","LARGE","ETF","NANO"];
+
+  const marketOpen = isMarketOpen();
+  // Find the most recent updated_at across all signals for staleness display
+  const lastUpdated = useMemo(()=>{
+    const ts = signals.map(s=>s.updated_at).filter(Boolean).sort().at(-1);
+    return ts ? fmtRelTime(ts) : null;
+  },[signals]);
 
   const filtered=useMemo(()=>signals
     .filter(s=>filter==="ALL"||s.tier===filter)
@@ -623,274 +686,306 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
 
   const top4=useMemo(()=>[...signals].sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,4),[signals]);
 
-  return (
-    // Root: full height flex column so sticky header + scrollable body work correctly
-    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - env(safe-area-inset-top,0px) - 58px)",paddingBottom:0}}>
+  const activeMode = SIGNAL_MODES.find(x=>x.id===horizon)||SIGNAL_MODES[1];
 
-      {/* ─── STICKY HEADER BLOCK ──────────────────────────────────────────────
-          position:sticky + top:0 keeps this block pinned while the scrollable
-          content below it scrolls. zIndex:100 ensures it renders above cards.
-          Background matches T.bgCard so scrolled content disappears cleanly.    */}
-      <div style={{position:"sticky",top:0,zIndex:100,flexShrink:0,
-        background:T.bgCard,borderBottom:`1px solid ${T.bdr}`,boxShadow:T.shadow}}>
+  // Header rendered separately so StickyScreen can pin it
+  const header = (
+    <>
+      {/* Identity row */}
+      <div style={{padding:"16px 20px 12px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+        <div>
+          <div style={{fontSize:11,color:T.acc,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:700}}>BigTrades</div>
+          <div style={{fontSize:24,fontWeight:800,color:T.txt,lineHeight:1.1}}>Market Intel</div>
+          <div style={{fontSize:12,color:T.mut,marginTop:2}}>{new Date().toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+          <StatusDot connected={connected}/>
+          <button onClick={()=>setShowFeatures(!showFeatures)}
+            style={{background:T.accLight,border:`1px solid ${T.acc}30`,borderRadius:8,
+              padding:"4px 10px",fontSize:11,color:T.acc,cursor:"pointer",fontWeight:600}}>
+            {showFeatures?"Hide":"What is this?"}
+          </button>
+        </div>
+      </div>
 
-        {/* Identity + status row */}
-        <div style={{padding:"16px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-          <div>
-            <div style={{fontSize:11,color:T.acc,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:700}}>BigTrades</div>
-            <div style={{fontSize:24,fontWeight:800,color:T.txt,lineHeight:1.1}}>Market Intel</div>
-            <div style={{fontSize:12,color:T.mut,marginTop:2}}>{new Date().toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>
-          </div>
-          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
-            <StatusDot connected={connected}/>
-            <button onClick={()=>setShowFeatures(!showFeatures)}
-              style={{background:T.accLight,border:`1px solid ${T.acc}30`,borderRadius:8,
-                padding:"4px 10px",fontSize:11,color:T.acc,cursor:"pointer",fontWeight:600}}>
-              {showFeatures?"Hide":"What is this?"}
-            </button>
+      {/* Features explainer */}
+      {showFeatures&&(
+        <div style={{margin:"0 20px 10px",background:T.accLight,borderRadius:12,padding:14,border:`1px solid ${T.acc}30`}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.acc,marginBottom:8}}>BigTrades — What This App Does</div>
+          <div style={{fontSize:12,color:T.txtMed,lineHeight:1.8}}>
+            🔍 <strong>Signal Scanning</strong> — Scans 30+ stocks using yfinance. Scores on catalyst, insiders, congress, technicals, macro, liquidity.<br/>
+            🏛 <strong>Congressional Intel</strong> — STOCK Act disclosures from Capitol Trades + Finnhub. Politicians buying before legislation = alpha.<br/>
+            🤖 <strong>AI Enrichment</strong> — Claude AI writes buy reasons, risks, entry/TP/stop targets for each signal.<br/>
+            📡 <strong>Telegram Alerts</strong> — Signals ≥ {80} fire to your Telegram automatically.<br/>
+            📄 <strong>Paper Trading</strong> — Autonomous virtual portfolio tracks each mode's performance.
           </div>
         </div>
+      )}
 
-        {/* Features explainer — inside sticky so it expands the header */}
-        {showFeatures&&(
-          <div style={{margin:"0 20px 12px",background:T.accLight,borderRadius:12,padding:14,
-            border:`1px solid ${T.acc}30`}}>
-            <div style={{fontSize:13,fontWeight:700,color:T.acc,marginBottom:8}}>BigTrades — What This App Does</div>
-            <div style={{fontSize:12,color:T.txtMed,lineHeight:1.8}}>
-              🔍 <strong>Signal Scanning</strong> — Automatically scans 30+ stocks every 10 minutes during market hours using yfinance (free, no rate limits)<br/>
-              📊 <strong>Conviction Scoring</strong> — Each signal gets a 0–100 score based on: catalyst strength, insider activity, congressional trades, technical setup, macro conditions, and liquidity<br/>
-              🏛 <strong>Congressional Intel</strong> — Tracks STOCK Act disclosures from Capitol Trades + Finnhub. Politicians buying before legislation = alpha signal<br/>
-              🤖 <strong>AI Enrichment</strong> — Claude AI generates buy reasons, risks, upside scenarios, and precise entry/TP/stop targets for each signal<br/>
-              📡 <strong>Telegram Alerts</strong> — Signals scoring ≥ 80 automatically fire to your Telegram channel with full trade cards<br/>
-              📅 <strong>Signal Modes</strong> — Surge, Swing, Position, Hold, Radar — each with different scoring and hold rules
-            </div>
+      {/* Market strip */}
+      <div style={{display:"flex",gap:8,overflowX:"auto",padding:"0 20px 12px",WebkitOverflowScrolling:"touch"}}>
+        {[
+          ["VIX",market?.vix?.toFixed?.(1)||"—",market?.sentiment==="RISK-ON"?T.grn:market?.sentiment==="RISK-OFF"?T.red:T.amb],
+          ["Sentiment",market?.sentiment||"—",market?.sentiment==="RISK-ON"?T.grn:T.amb],
+        ].map(([l,v,c])=>(
+          <div key={l} style={{background:T.bgEl,border:`1px solid ${T.bdr}`,borderRadius:10,padding:"8px 14px",flexShrink:0}}>
+            <div style={{fontSize:10,color:T.mut,fontWeight:500}}>{l}</div>
+            <div style={{fontSize:14,fontWeight:700,color:c||T.txt}}>{v}</div>
           </div>
-        )}
+        ))}
+      </div>
 
-        {/* Market strip */}
-        <div style={{display:"flex",gap:8,overflowX:"auto",padding:"0 20px 12px",WebkitOverflowScrolling:"touch"}}>
-          {[
-            ["VIX",market?.vix?.toFixed?.(1)||"—",market?.sentiment==="RISK-ON"?T.grn:market?.sentiment==="RISK-OFF"?T.red:T.amb],
-            ["Sentiment",market?.sentiment||"—",market?.sentiment==="RISK-ON"?T.grn:T.amb],
-          ].map(([l,v,c])=>(
-            <div key={l} style={{background:T.bgEl,border:`1px solid ${T.bdr}`,borderRadius:10,
-              padding:"8px 14px",flexShrink:0}}>
-              <div style={{fontSize:10,color:T.mut,fontWeight:500}}>{l}</div>
-              <div style={{fontSize:14,fontWeight:700,color:c||T.txt}}>{v}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Signal Mode selector — 5 modes (also sticky) */}
-        <div style={{padding:"0 20px 14px",borderTop:`1px solid ${T.bdr}`}}>
-          <div style={{fontSize:11,fontWeight:700,color:T.mut,textTransform:"uppercase",letterSpacing:"0.08em",margin:"12px 0 10px"}}>
+      {/* Signal Mode selector */}
+      <div style={{padding:"0 20px 14px",borderTop:`1px solid ${T.bdr}`}}>
+        {/* Label row with ℹ️ toggle on the right — A2 */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",margin:"12px 0 10px"}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.mut,textTransform:"uppercase",letterSpacing:"0.08em"}}>
             Signal Mode
           </div>
-          {/* Row 1: SURGE + SWING + POSITION */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
-            {SIGNAL_MODES.slice(0,3).map(m=>(
-              <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
-                background:horizon===m.id?m.color:T.bgEl,
-                border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
-                color:horizon===m.id?T.bgCard:T.mut,
-                borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
-                boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
-                <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
-                <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
-              </button>
-            ))}
-          </div>
-          {/* Row 2: HOLD + RADAR */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {SIGNAL_MODES.slice(3).map(m=>(
-              <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
-                background:horizon===m.id?m.color:T.bgEl,
-                border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
-                color:horizon===m.id?T.bgCard:T.mut,
-                borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
-                boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
-                <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
-                <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
-              </button>
-            ))}
-          </div>
-          {/* Mode description pill */}
-          {(()=>{const m=SIGNAL_MODES.find(x=>x.id===horizon)||SIGNAL_MODES[1]; return (
-            <div style={{marginTop:10,background:m.bg,border:`1px solid ${m.color}25`,borderRadius:10,padding:"10px 12px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <span style={{fontSize:12,color:m.color,fontWeight:700}}>{m.icon} {m.label}</span>
-                <span style={{fontSize:10,color:m.color,background:`${m.color}20`,padding:"2px 8px",borderRadius:20,fontWeight:600}}>
-                  Hold: {m.holdDesc}
-                </span>
-              </div>
-              <div style={{fontSize:11,color:T.txtMed,lineHeight:1.5,marginBottom:4}}>{m.desc}</div>
-              <div style={{fontSize:10,color:T.mut}}>e.g. {m.examples}</div>
-            </div>
-          );})()}
+          <button onClick={()=>setShowModeInfo(v=>!v)}
+            title="About signal modes"
+            style={{background:showModeInfo?T.acc:T.bgEl,border:`1px solid ${showModeInfo?T.acc:T.bdr}`,
+              borderRadius:"50%",width:24,height:24,display:"flex",alignItems:"center",
+              justifyContent:"center",cursor:"pointer",color:showModeInfo?T.bgCard:T.mut,
+              fontSize:13,fontWeight:700,lineHeight:1,flexShrink:0,transition:"all 0.15s"}}>
+            ⓘ
+          </button>
         </div>
-      </div>
-      {/* ─── END STICKY HEADER ─────────────────────────────────────────────── */}
 
-      {/* ─── SCROLLABLE CONTENT BELOW HEADER ──────────────────────────────────
-          overflowY:auto on this div means only this section scrolls.
-          The sticky header above stays pinned. Bottom nav stays pinned below.
-          paddingBottom:80 gives clearance above the bottom nav bar.              */}
-      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
-
-        {/* Top conviction carousel */}
-        {top4.length>0&&(
-          <div style={{padding:"16px 20px 0"}}>
-            <div style={{fontSize:11,fontWeight:700,color:T.mut,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>
-              🔥 Top Conviction
+        {/* Mode info panel — only visible when ℹ️ toggled on — A2 */}
+        {showModeInfo&&(
+          <div style={{marginBottom:10,background:activeMode.bg,border:`1px solid ${activeMode.color}25`,
+            borderRadius:10,padding:"10px 12px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+              <span style={{fontSize:12,color:activeMode.color,fontWeight:700}}>{activeMode.icon} {activeMode.label}</span>
+              <span style={{fontSize:10,color:activeMode.color,background:`${activeMode.color}20`,
+                padding:"2px 8px",borderRadius:20,fontWeight:600}}>Hold: {activeMode.holdDesc}</span>
             </div>
-            <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
-              {top4.map(s=>(
-                <div key={s.ticker} onClick={()=>onSelect(s)} style={{background:T.bgCard,
-                  border:`1px solid ${T.bdrCard}`,borderRadius:14,padding:14,minWidth:148,
-                  cursor:"pointer",flexShrink:0,boxShadow:T.shadow,transition:"all 0.15s"}}
-                  onMouseEnter={e=>{e.currentTarget.style.borderColor=T.acc;e.currentTarget.style.transform="translateY(-2px)";}}
-                  onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bdrCard;e.currentTarget.style.transform="none";}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                    <span style={{fontSize:16,fontWeight:800,color:T.txt}}>{s.ticker}</span>
-                    <ScoreRing score={s.score||0} size={36}/>
-                  </div>
-                  <div style={{fontSize:10,color:T.mut,marginBottom:6,fontWeight:500}}>{s.sector||s.tier}</div>
-                  <Sparkline data={s.sparkline||[]} color={(s.change||0)>=0?T.grn:T.red} h={28} w={118}/>
-                  <div style={{fontSize:12,color:(s.change||0)>=0?T.grn:T.red,fontWeight:700,marginTop:5,
-                    background:(s.change||0)>=0?T.grnLight:T.redLight,padding:"2px 8px",borderRadius:20,display:"inline-block"}}>
-                    {s.change!==undefined?`${(s.change||0)>=0?"+":""}${Number(s.change).toFixed(2)}%`:"—"}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <div style={{fontSize:11,color:T.txtMed,lineHeight:1.5,marginBottom:4}}>{activeMode.desc}</div>
+            <div style={{fontSize:10,color:T.mut}}>e.g. {activeMode.examples}</div>
           </div>
         )}
 
-        {/* Search + tier filter */}
+        {/* Row 1: SURGE + SWING + POSITION */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+          {SIGNAL_MODES.slice(0,3).map(m=>(
+            <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
+              background:horizon===m.id?m.color:T.bgEl,
+              border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
+              color:horizon===m.id?T.bgCard:T.mut,
+              borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
+              boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
+              <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
+              <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
+            </button>
+          ))}
+        </div>
+        {/* Row 2: HOLD + RADAR */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {SIGNAL_MODES.slice(3).map(m=>(
+            <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
+              background:horizon===m.id?m.color:T.bgEl,
+              border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
+              color:horizon===m.id?T.bgCard:T.mut,
+              borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
+              boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
+              <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
+              <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+
+  return (
+    <StickyScreen header={header}>
+
+      {/* ── B: Off-hours banner ──────────────────────────────────────────────
+          Always shown when market is closed. Signals from the last scan remain
+          visible. User can manually trigger a lightweight refresh (yfinance
+          30d cached data, no extra API cost) to prep for next market open.     */}
+      {!marketOpen&&(
+        <div style={{margin:"14px 14px 0",background:T.ambLight,border:`1px solid ${T.amb}40`,
+          borderRadius:14,padding:"12px 14px",display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12,fontWeight:700,color:T.amb,marginBottom:2}}>
+              🌙 Market Closed · Opens {getNextMarketOpen()}
+            </div>
+            <div style={{fontSize:11,color:T.mut}}>
+              {lastUpdated?`Signals last updated ${lastUpdated} · `:""}
+              Showing last known data
+            </div>
+          </div>
+          <button onClick={onManualRefresh} disabled={refreshing}
+            style={{background:refreshing?T.bgEl:T.amb,border:"none",borderRadius:10,
+              padding:"8px 12px",fontSize:11,fontWeight:700,color:refreshing?T.mut:T.bgCard,
+              cursor:refreshing?"default":"pointer",flexShrink:0,whiteSpace:"nowrap",
+              transition:"all 0.2s"}}>
+            {refreshing?"↻ Refreshing…":"↻ Refresh"}
+          </button>
+        </div>
+      )}
+
+      {/* Top conviction carousel */}
+      {top4.length>0&&(
         <div style={{padding:"14px 20px 0"}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ticker or company..."
-            style={{width:"100%",background:T.bgCard,border:`1.5px solid ${T.bdr}`,borderRadius:12,
-              padding:"11px 16px",color:T.txt,fontSize:13,boxSizing:"border-box",outline:"none",
-              fontFamily:"inherit",boxShadow:T.shadow,marginBottom:10}}
-            onFocus={e=>e.target.style.borderColor=T.acc}
-            onBlur={e=>e.target.style.borderColor=T.bdr}/>
-          <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6,WebkitOverflowScrolling:"touch"}}>
-            {tiers.map(t=><Chip key={t} label={t} active={filter===t} onClick={()=>setFilter(t)}
-              color={t!=="ALL"?tierColor(t):T.acc}/>)}
+          <div style={{fontSize:11,fontWeight:700,color:T.mut,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>
+            🔥 Top Conviction
+          </div>
+          <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
+            {top4.map(s=>(
+              <div key={s.ticker} onClick={()=>onSelect(s)} style={{background:T.bgCard,
+                border:`1px solid ${T.bdrCard}`,borderRadius:14,padding:14,minWidth:148,
+                cursor:"pointer",flexShrink:0,boxShadow:T.shadow,transition:"all 0.15s"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor=T.acc;e.currentTarget.style.transform="translateY(-2px)";}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bdrCard;e.currentTarget.style.transform="none";}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <span style={{fontSize:16,fontWeight:800,color:T.txt}}>{s.ticker}</span>
+                  <ScoreRing score={s.score||0} size={36}/>
+                </div>
+                <div style={{fontSize:10,color:T.mut,marginBottom:6,fontWeight:500}}>{s.sector||s.tier}</div>
+                <Sparkline data={s.sparkline||[]} color={(s.change||0)>=0?T.grn:T.red} h={28} w={118}/>
+                <div style={{fontSize:12,color:(s.change||0)>=0?T.grn:T.red,fontWeight:700,marginTop:5,
+                  background:(s.change||0)>=0?T.grnLight:T.redLight,padding:"2px 8px",borderRadius:20,display:"inline-block"}}>
+                  {s.change!==undefined?`${(s.change||0)>=0?"+":""}${Number(s.change).toFixed(2)}%`:"—"}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
+      )}
 
-        {/* Signal list */}
-        <div style={{padding:"12px 20px 80px"}}>
-          {loading&&signals.length===0
-            ?<><LoadingPulse/><LoadingPulse/><LoadingPulse/></>
-            :filtered.length===0
-            ?<EmptyState icon="📡" title="No signals match filter"
-                subtitle="Try ALL tier or clear search. Scan runs every 10 min during market hours."/>
-            :filtered.map(s=><SignalCard key={s.ticker||s.id} signal={s} onClick={()=>onSelect(s)}/>)}
+      {/* Search + tier filter */}
+      <div style={{padding:"14px 20px 0"}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ticker or company..."
+          style={{width:"100%",background:T.bgCard,border:`1.5px solid ${T.bdr}`,borderRadius:12,
+            padding:"11px 16px",color:T.txt,fontSize:13,boxSizing:"border-box",outline:"none",
+            fontFamily:"inherit",boxShadow:T.shadow,marginBottom:10}}
+          onFocus={e=>e.target.style.borderColor=T.acc}
+          onBlur={e=>e.target.style.borderColor=T.bdr}/>
+        <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6,WebkitOverflowScrolling:"touch"}}>
+          {tiers.map(t=><Chip key={t} label={t} active={filter===t} onClick={()=>setFilter(t)}
+            color={t!=="ALL"?tierColor(t):T.acc}/>)}
         </div>
-
       </div>
-      {/* ─── END SCROLLABLE CONTENT ────────────────────────────────────────── */}
 
-    </div>
+      {/* Signal list */}
+      <div style={{padding:"12px 20px 80px"}}>
+        {loading&&signals.length===0
+          ?<><LoadingPulse/><LoadingPulse/><LoadingPulse/></>
+          :filtered.length===0
+          ?<EmptyState icon="📡" title="No signals match filter"
+              subtitle="Try ALL tier or clear search. Scan runs every 10 min during market hours."/>
+          :filtered.map(s=><SignalCard key={s.ticker||s.id} signal={s} onClick={()=>onSelect(s)}/>)}
+      </div>
+
+    </StickyScreen>
   );
 };
 
 // ─── CONGRESS SCREEN ─────────────────────────────────────────────────────────
 const CongressScreen = ({data,loading})=>{
   const hasData=data&&data.length>0;
-  return (
-    <div style={{padding:"20px 20px 80px"}}>
-      <div style={{marginBottom:16}}>
-        <div style={{fontSize:11,color:T.acc,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700}}>Intelligence</div>
-        <div style={{fontSize:24,fontWeight:800,color:T.txt}}>Congressional Trades</div>
-        <div style={{fontSize:12,color:T.mut,marginTop:2}}>
-          {hasData?`${data.length} trades · Capitol Trades + Finnhub`:"STOCK Act disclosures · Live feed"}
-        </div>
+  const header=(
+    <div style={{padding:"20px 20px 14px"}}>
+      <div style={{fontSize:11,color:T.acc,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700}}>Intelligence</div>
+      <div style={{fontSize:24,fontWeight:800,color:T.txt}}>Congressional Trades</div>
+      <div style={{fontSize:12,color:T.mut,marginTop:2}}>
+        {hasData?`${data.length} trades · Capitol Trades + Finnhub`:"STOCK Act disclosures · Live feed"}
       </div>
-      <div style={{background:T.ambLight,border:`1px solid ${T.amb}30`,borderRadius:12,
-        padding:"11px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"center"}}>
-        <span>🏛</span>
-        <span style={{fontSize:12,color:T.amb,lineHeight:1.5,fontWeight:500}}>
-          Members disclose within 45 days. Committee-relevant buys have historically preceded major price moves.
-        </span>
-      </div>
-      {loading?<><LoadingPulse/><LoadingPulse/></>
-      :!hasData?<EmptyState icon="🏛" title="No congressional trades loaded"
-          subtitle={`Requires FINNHUB_API_KEY in server environment.\n\nDebug: ${API_BASE}/api/telegram/debug\nTest congress: ${API_BASE}/api/congress`}/>
-      :data.map((t,i)=>(
-        <div key={i} style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:16,
-          padding:16,marginBottom:10,boxShadow:T.shadow}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-            <div>
-              <div style={{fontSize:14,fontWeight:700,color:T.txt}}>{t.member||t.Representative||"Unknown"}</div>
-              <div style={{fontSize:11,color:T.mut,marginTop:2}}>
-                {t.party==="D"?"🔵":t.party==="R"?"🔴":"⚪"} {t.state||t.chamber||""} · {t.date||t.Date||""}
-              </div>
-            </div>
-            <div style={{textAlign:"right"}}>
-              <div style={{fontSize:20,fontWeight:800,
-                color:(t.action||t.Transaction||"").toLowerCase().includes("buy")||(t.action||"").toLowerCase().includes("purchase")?T.grn:T.red}}>
-                {t.ticker||t.Ticker||""}
-              </div>
-              <div style={{fontSize:11,fontWeight:600,
-                color:(t.action||t.Transaction||"").toLowerCase().includes("buy")||(t.action||"").toLowerCase().includes("purchase")?T.grn:T.red,
-                background:(t.action||t.Transaction||"").toLowerCase().includes("buy")?T.grnLight:T.redLight,
-                padding:"2px 8px",borderRadius:20,display:"inline-block",marginTop:2}}>
-                {t.action||t.Transaction||""}
-              </div>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
-            {(t.amount||t.Range)&&<Tag text={t.amount||t.Range} color={T.acc} bg={T.accLight}/>}
-            {(t.committee||t.Committee)&&<Tag text={`${t.committee||t.Committee}`} color={T.pur} bg={T.purLight}/>}
-            {t.relevance&&<Tag text={t.relevance} color={t.relevance==="Direct"?T.grn:T.amb}/>}
-            <Tag text={t.source||t.verified_source||"STOCK Act"} color={T.mut} bg={T.bgEl}/>
-          </div>
-        </div>
-      ))}
     </div>
+  );
+  return (
+    <StickyScreen header={header}>
+      <div style={{padding:"0 20px 80px"}}>
+        <div style={{background:T.ambLight,border:`1px solid ${T.amb}30`,borderRadius:12,
+          padding:"11px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"center",marginTop:14}}>
+          <span>🏛</span>
+          <span style={{fontSize:12,color:T.amb,lineHeight:1.5,fontWeight:500}}>
+            Members disclose within 45 days. Committee-relevant buys have historically preceded major price moves.
+          </span>
+        </div>
+        {loading?<><LoadingPulse/><LoadingPulse/></>
+        :!hasData?<EmptyState icon="🏛" title="No congressional trades loaded"
+            subtitle={`Requires FINNHUB_API_KEY in server environment.\n\nDebug: ${API_BASE}/api/telegram/debug\nTest congress: ${API_BASE}/api/congress`}/>
+        :data.map((t,i)=>(
+          <div key={i} style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:16,
+            padding:16,marginBottom:10,boxShadow:T.shadow}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:T.txt}}>{t.member||t.Representative||"Unknown"}</div>
+                <div style={{fontSize:11,color:T.mut,marginTop:2}}>
+                  {t.party==="D"?"🔵":t.party==="R"?"🔴":"⚪"} {t.state||t.chamber||""} · {t.date||t.Date||""}
+                </div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:20,fontWeight:800,
+                  color:(t.action||t.Transaction||"").toLowerCase().includes("buy")||(t.action||"").toLowerCase().includes("purchase")?T.grn:T.red}}>
+                  {t.ticker||t.Ticker||""}
+                </div>
+                <div style={{fontSize:11,fontWeight:600,
+                  color:(t.action||t.Transaction||"").toLowerCase().includes("buy")||(t.action||"").toLowerCase().includes("purchase")?T.grn:T.red,
+                  background:(t.action||t.Transaction||"").toLowerCase().includes("buy")?T.grnLight:T.redLight,
+                  padding:"2px 8px",borderRadius:20,display:"inline-block",marginTop:2}}>
+                  {t.action||t.Transaction||""}
+                </div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+              {(t.amount||t.Range)&&<Tag text={t.amount||t.Range} color={T.acc} bg={T.accLight}/>}
+              {(t.committee||t.Committee)&&<Tag text={`${t.committee||t.Committee}`} color={T.pur} bg={T.purLight}/>}
+              {t.relevance&&<Tag text={t.relevance} color={t.relevance==="Direct"?T.grn:T.amb}/>}
+              <Tag text={t.source||t.verified_source||"STOCK Act"} color={T.mut} bg={T.bgEl}/>
+            </div>
+          </div>
+        ))}
+      </div>
+    </StickyScreen>
   );
 };
 
 // ─── NEWS SCREEN ─────────────────────────────────────────────────────────────
 const NewsScreen = ({data,loading})=>{
   const hasData=data&&data.length>0;
-  return (
-    <div style={{padding:"20px 20px 80px"}}>
-      <div style={{marginBottom:16}}>
-        <div style={{fontSize:11,color:T.acc,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700}}>Catalyst Feed</div>
-        <div style={{fontSize:24,fontWeight:800,color:T.txt}}>Market News</div>
-        <div style={{fontSize:12,color:T.mut,marginTop:2}}>{hasData?`${data.length} articles · Finnhub`:"Live company news"}</div>
-      </div>
-      {loading?<><LoadingPulse lines={4}/></>
-      :!hasData?<EmptyState icon="📰" title="No live news loaded"
-          subtitle={`Requires FINNHUB_API_KEY in server environment.\n\nThe backend fetches Finnhub company news for all watchlist tickers every 5 minutes.\n\nTest: ${API_BASE}/api/news`}/>
-      :data.map((n,i)=>(
-        <div key={i} style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:14,
-          padding:16,marginBottom:10,boxShadow:T.shadow,
-          borderLeft:`3px solid ${n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.dim}`}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-            <div style={{display:"flex",gap:7,alignItems:"center"}}>
-              <span style={{fontSize:14,fontWeight:800,
-                color:n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.mut}}>
-                {n.ticker||n.keyword||""}
-              </span>
-              <span style={{fontSize:9,padding:"2px 7px",borderRadius:20,fontWeight:700,
-                background:n.sentiment==="bull"?T.grnLight:n.sentiment==="bear"?T.redLight:T.bgEl,
-                color:n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.mut,
-                border:`1px solid ${n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.dim}30`}}>
-                {(n.sentiment||"neutral").toUpperCase()}
-              </span>
-            </div>
-            <span style={{fontSize:10,color:T.dim}}>{n.time||n.published?.slice(0,10)||""}</span>
-          </div>
-          <div style={{fontSize:13,color:T.txt,lineHeight:1.5,marginBottom:5}}>{n.headline||n.title||""}</div>
-          <div style={{fontSize:11,color:T.dim}}>{n.source||""}</div>
-        </div>
-      ))}
+  const header=(
+    <div style={{padding:"20px 20px 14px"}}>
+      <div style={{fontSize:11,color:T.acc,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700}}>Catalyst Feed</div>
+      <div style={{fontSize:24,fontWeight:800,color:T.txt}}>Market News</div>
+      <div style={{fontSize:12,color:T.mut,marginTop:2}}>{hasData?`${data.length} articles · Finnhub`:"Live company news"}</div>
     </div>
+  );
+  return (
+    <StickyScreen header={header}>
+      <div style={{padding:"14px 20px 80px"}}>
+        {loading?<><LoadingPulse lines={4}/></>
+        :!hasData?<EmptyState icon="📰" title="No live news loaded"
+            subtitle={`Requires FINNHUB_API_KEY in server environment.\n\nThe backend fetches Finnhub company news for all watchlist tickers every 5 minutes.\n\nTest: ${API_BASE}/api/news`}/>
+        :data.map((n,i)=>(
+          <div key={i} style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:14,
+            padding:16,marginBottom:10,boxShadow:T.shadow,
+            borderLeft:`3px solid ${n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.dim}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{display:"flex",gap:7,alignItems:"center"}}>
+                <span style={{fontSize:14,fontWeight:800,
+                  color:n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.mut}}>
+                  {n.ticker||n.keyword||""}
+                </span>
+                <span style={{fontSize:9,padding:"2px 7px",borderRadius:20,fontWeight:700,
+                  background:n.sentiment==="bull"?T.grnLight:n.sentiment==="bear"?T.redLight:T.bgEl,
+                  color:n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.mut,
+                  border:`1px solid ${n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.dim}30`}}>
+                  {(n.sentiment||"neutral").toUpperCase()}
+                </span>
+              </div>
+              <span style={{fontSize:10,color:T.dim}}>{n.time||n.published?.slice(0,10)||""}</span>
+            </div>
+            <div style={{fontSize:13,color:T.txt,lineHeight:1.5,marginBottom:5}}>{n.headline||n.title||""}</div>
+            <div style={{fontSize:11,color:T.dim}}>{n.source||""}</div>
+          </div>
+        ))}
+      </div>
+    </StickyScreen>
   );
 };
 
@@ -978,8 +1073,8 @@ const SettingsScreen = ({connected,onSettingsSaved})=>{
   );
 
   return (
-    <div style={{padding:"20px 20px 80px"}}>
-      <div style={{marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+    <StickyScreen header={
+      <div style={{padding:"20px 20px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
         <div>
           <div style={{fontSize:11,color:T.acc,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700}}>Configuration</div>
           <div style={{fontSize:24,fontWeight:800,color:T.txt}}>Settings</div>
@@ -989,6 +1084,8 @@ const SettingsScreen = ({connected,onSettingsSaved})=>{
           🔒 Lock
         </button>
       </div>
+    }>
+      <div style={{padding:"0 20px 80px"}}>
 
       {health&&(
         <GrpCard title="🟢 Backend Health">
@@ -1111,7 +1208,9 @@ const SettingsScreen = ({connected,onSettingsSaved})=>{
         transition:"all 0.3s",boxShadow:saved?`0 4px 12px ${T.grn}40`:`0 4px 12px ${T.acc}40`}}>
         {saved?"✓ Saved!":"Save Settings"}
       </button>
-    </div>
+
+      </div>
+    </StickyScreen>
   );
 };
 
@@ -1157,31 +1256,25 @@ const PaperScreen = () => {
   };
 
   return (
-    <div style={{paddingBottom:80}}>
-      {/* Header */}
-      <div style={{background:T.bgCard,padding:"20px 20px 0",borderBottom:`1px solid ${T.bdr}`,boxShadow:T.shadow}}>
+    <StickyScreen header={
+      <div style={{background:T.bgCard,padding:"20px 20px 0"}}>
         <div style={{fontSize:11,color:T.acc,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:700}}>BigTrades</div>
         <div style={{fontSize:24,fontWeight:800,color:T.txt,marginBottom:14}}>Paper Trading</div>
-
-        {/* Summary strip */}
         {summary && (
-          <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:14}}>
+          <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:14,WebkitOverflowScrolling:"touch"}}>
             {[
               ["Total PnL", `${summary.total_realised_pnl>=0?"+":""}$${Math.abs(summary.total_realised_pnl||0).toFixed(0)}`, summary.total_realised_pnl>=0?T.grn:T.red],
               ["Win Rate", `${summary.overall_win_rate||0}%`, T.acc],
               ["Trades", summary.total_trades||0, T.txt],
               ["Open", summary.open_positions||0, T.amb],
             ].map(([l,v,c])=>(
-              <div key={l} style={{background:T.bgEl,border:`1px solid ${T.bdr}`,borderRadius:10,
-                padding:"8px 14px",flexShrink:0}}>
+              <div key={l} style={{background:T.bgEl,border:`1px solid ${T.bdr}`,borderRadius:10,padding:"8px 14px",flexShrink:0}}>
                 <div style={{fontSize:10,color:T.mut,fontWeight:500}}>{l}</div>
                 <div style={{fontSize:14,fontWeight:800,color:c||T.txt}}>{v}</div>
               </div>
             ))}
           </div>
         )}
-
-        {/* Tabs */}
         <div style={{display:"flex",borderTop:`1px solid ${T.bdr}`,margin:"0 -20px"}}>
           {[["overview","Portfolios"],["positions","Open"],["trades","Closed"],["analytics","Analytics"]].map(([k,l])=>(
             <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"12px 4px",fontSize:11,fontWeight:700,
@@ -1191,17 +1284,16 @@ const PaperScreen = () => {
           ))}
         </div>
       </div>
-
-      {/* Mode filter chips */}
-      <div style={{padding:"12px 20px 0",display:"flex",gap:8,overflowX:"auto",paddingBottom:4}}>
-        {["ALL",...SIGNAL_MODES.map(m=>m.id)].map(id=>{
-          const m = SIGNAL_MODES.find(x=>x.id===id);
-          return <Chip key={id} label={m?`${m.icon} ${m.label}`:"All"} active={modeFilter===id}
-            onClick={()=>setModeFilter(id)} color={m?.color||T.acc}/>;
-        })}
-      </div>
-
-      <div style={{padding:"12px 20px 0"}}>
+    }>
+      <div style={{padding:"0 20px 80px"}}>
+        {/* Mode filter chips */}
+        <div style={{display:"flex",gap:8,overflowX:"auto",padding:"12px 0 4px",WebkitOverflowScrolling:"touch"}}>
+          {["ALL",...SIGNAL_MODES.map(m=>m.id)].map(id=>{
+            const m = SIGNAL_MODES.find(x=>x.id===id);
+            return <Chip key={id} label={m?`${m.icon} ${m.label}`:"All"} active={modeFilter===id}
+              onClick={()=>setModeFilter(id)} color={m?.color||T.acc}/>;
+          })}
+        </div>
 
         {tab==="overview" && (
           loading ? <LoadingPulse/> :
@@ -1377,11 +1469,9 @@ const PaperScreen = () => {
         )}
 
       </div>
-    </div>
+    </StickyScreen>
   );
 };
-
-// ─── BOTTOM NAV ───────────────────────────────────────────────────────────────
 const NAV=[{id:"home",icon:"⚡",label:"Signals"},{id:"congress",icon:"🏛",label:"Congress"},
   {id:"news",icon:"📰",label:"News"},{id:"paper",icon:"📄",label:"Paper"},
   {id:"settings",icon:"⚙️",label:"Settings"}];
@@ -1405,17 +1495,17 @@ const BottomNav = ({active,onChange})=>(
 
 // ─── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [screen,setScreen]     = useState("home");
-  const [selected,setSelected] = useState(null);
-  const [mode,setMode]         = useState("SWING");  // active signal mode
-  const [signals,setSignals]   = useState([]);
-  const [congress,setCongress] = useState([]);
-  const [news,setNews]         = useState([]);
-  const [market,setMarket]     = useState({});
-  const [loading,setLoading]   = useState(true);
-  const [toast,setToast]       = useState(null);
-  // horizon is an alias so HomeScreen props still work
-  const horizon = mode;
+  const [screen,setScreen]       = useState("home");
+  const [selected,setSelected]   = useState(null);
+  const [mode,setMode]           = useState("SWING");
+  const [signals,setSignals]     = useState([]);
+  const [congress,setCongress]   = useState([]);
+  const [news,setNews]           = useState([]);
+  const [market,setMarket]       = useState({});
+  const [loading,setLoading]     = useState(true);
+  const [toast,setToast]         = useState(null);
+  const [refreshing,setRefreshing] = useState(false); // B: manual refresh spinner
+  const horizon    = mode;
   const setHorizon = setMode;
 
   const showToast=useCallback((msg)=>{setToast(msg);setTimeout(()=>setToast(null),3500);},[]);
@@ -1435,6 +1525,27 @@ export default function App() {
 
   const connected=useWS(handleWsMessage);
 
+  // B: fetchSignals is a stable callback keyed on mode
+  const fetchSignals = useCallback(async(showSpinner=false)=>{
+    if(showSpinner) setRefreshing(true);
+    const s = await api.get(`/api/signals?mode=${mode}`);
+    if(s?.signals?.length) setSignals(s.signals);
+    if(showSpinner) setRefreshing(false);
+  },[mode]);
+
+  // B: Manual refresh — triggers backend scan then re-fetches
+  // Uses yfinance 30-day cached data → no extra API cost vs regular scan
+  const handleManualRefresh = useCallback(async()=>{
+    if(refreshing) return;
+    setRefreshing(true);
+    showToast("↻ Refreshing signals…");
+    await api.post("/api/scan",{});
+    await new Promise(r=>setTimeout(r,4000));
+    await fetchSignals(false);
+    setRefreshing(false);
+    showToast("✓ Signals refreshed");
+  },[fetchSignals,showToast,refreshing]);
+
   useEffect(()=>{
     const load=async()=>{
       setLoading(true);
@@ -1451,14 +1562,24 @@ export default function App() {
       setLoading(false);
     };
     load();
-    const interval=setInterval(()=>{
-      api.get(`/api/signals?mode=${mode}`).then(s=>s?.signals?.length&&setSignals(s.signals));
-      api.get("/api/news").then(n=>n?.catalysts?.length&&setNews(n.catalysts));
-      api.get("/api/market").then(m=>m?.vix&&setMarket(m));
-      api.get("/api/congress").then(c=>c?.trades?.length&&setCongress(c.trades));
-    },5*60*1000);
-    return()=>clearInterval(interval);
-  },[mode]);
+
+    // Smart interval: 10 min during market hours, 30 min off-hours
+    // Uses self-scheduling setTimeout so each tick re-evaluates market status
+    const MARKET_MS   = 10 * 60 * 1000;
+    const OFFHOURS_MS = 30 * 60 * 1000;
+    const timerRef = {current:null};
+    const tick = ()=>{
+      timerRef.current = setTimeout(async()=>{
+        await fetchSignals();
+        api.get("/api/news").then(n=>n?.catalysts?.length&&setNews(n.catalysts));
+        api.get("/api/market").then(m=>m?.vix&&setMarket(m));
+        api.get("/api/congress").then(c=>c?.trades?.length&&setCongress(c.trades));
+        tick(); // reschedule — picks up new market-open status each time
+      }, isMarketOpen() ? MARKET_MS : OFFHOURS_MS);
+    };
+    tick();
+    return()=>clearTimeout(timerRef.current);
+  },[mode,fetchSignals]);
 
   return (
     <div style={{background:T.bg,minHeight:"100vh",maxWidth:430,margin:"0 auto",
@@ -1466,7 +1587,7 @@ export default function App() {
       position:"relative",overflowX:"hidden"}}>
       <div style={{height:"env(safe-area-inset-top,0px)",background:T.bgCard}}/>
 
-      {screen==="home"      &&<HomeScreen signals={signals} loading={loading} connected={connected} onSelect={setSelected} market={market} horizon={horizon} setHorizon={setHorizon}/>}
+      {screen==="home"      &&<HomeScreen signals={signals} loading={loading} connected={connected} onSelect={setSelected} market={market} horizon={horizon} setHorizon={setHorizon} onManualRefresh={handleManualRefresh} refreshing={refreshing}/>}
       {screen==="congress"  &&<CongressScreen data={congress} loading={loading}/>}
       {screen==="news"      &&<NewsScreen data={news} loading={loading}/>}
       {screen==="paper"     &&<PaperScreen/>}
