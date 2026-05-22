@@ -624,11 +624,18 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
   const top4=useMemo(()=>[...signals].sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,4),[signals]);
 
   return (
-    <div style={{paddingBottom:80}}>
-      {/* Header */}
-      <div style={{background:T.bgCard,padding:"20px 20px 16px",borderBottom:`1px solid ${T.bdr}`,
-        boxShadow:T.shadow}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+    // Root: full height flex column so sticky header + scrollable body work correctly
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - env(safe-area-inset-top,0px) - 58px)",paddingBottom:0}}>
+
+      {/* ─── STICKY HEADER BLOCK ──────────────────────────────────────────────
+          position:sticky + top:0 keeps this block pinned while the scrollable
+          content below it scrolls. zIndex:100 ensures it renders above cards.
+          Background matches T.bgCard so scrolled content disappears cleanly.    */}
+      <div style={{position:"sticky",top:0,zIndex:100,flexShrink:0,
+        background:T.bgCard,borderBottom:`1px solid ${T.bdr}`,boxShadow:T.shadow}}>
+
+        {/* Identity + status row */}
+        <div style={{padding:"16px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
           <div>
             <div style={{fontSize:11,color:T.acc,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:700}}>BigTrades</div>
             <div style={{fontSize:24,fontWeight:800,color:T.txt,lineHeight:1.1}}>Market Intel</div>
@@ -644,9 +651,9 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
           </div>
         </div>
 
-        {/* Features explainer */}
+        {/* Features explainer — inside sticky so it expands the header */}
         {showFeatures&&(
-          <div style={{background:T.accLight,borderRadius:12,padding:14,marginBottom:12,
+          <div style={{margin:"0 20px 12px",background:T.accLight,borderRadius:12,padding:14,
             border:`1px solid ${T.acc}30`}}>
             <div style={{fontSize:13,fontWeight:700,color:T.acc,marginBottom:8}}>BigTrades — What This App Does</div>
             <div style={{fontSize:12,color:T.txtMed,lineHeight:1.8}}>
@@ -655,13 +662,13 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
               🏛 <strong>Congressional Intel</strong> — Tracks STOCK Act disclosures from Capitol Trades + Finnhub. Politicians buying before legislation = alpha signal<br/>
               🤖 <strong>AI Enrichment</strong> — Claude AI generates buy reasons, risks, upside scenarios, and precise entry/TP/stop targets for each signal<br/>
               📡 <strong>Telegram Alerts</strong> — Signals scoring ≥ 80 automatically fire to your Telegram channel with full trade cards<br/>
-              📅 <strong>Time Horizons</strong> — Filter signals by how long you plan to hold: Daily (1–3 sessions), Weekly, Monthly, or 6-Month
+              📅 <strong>Signal Modes</strong> — Surge, Swing, Position, Hold, Radar — each with different scoring and hold rules
             </div>
           </div>
         )}
 
         {/* Market strip */}
-        <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:2}}>
+        <div style={{display:"flex",gap:8,overflowX:"auto",padding:"0 20px 12px",WebkitOverflowScrolling:"touch"}}>
           {[
             ["VIX",market?.vix?.toFixed?.(1)||"—",market?.sentiment==="RISK-ON"?T.grn:market?.sentiment==="RISK-OFF"?T.red:T.amb],
             ["Sentiment",market?.sentiment||"—",market?.sentiment==="RISK-ON"?T.grn:T.amb],
@@ -673,108 +680,119 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
             </div>
           ))}
         </div>
-      </div>
 
-      {/* Signal Mode selector — 5 modes */}
-      <div style={{padding:"16px 20px 12px",background:T.bgCard,borderBottom:`1px solid ${T.bdr}`}}>
-        <div style={{fontSize:11,fontWeight:700,color:T.mut,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:10}}>
-          Signal Mode
-        </div>
-        {/* Row 1: SURGE + SWING + POSITION */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
-          {SIGNAL_MODES.slice(0,3).map(m=>(
-            <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
-              background:horizon===m.id?m.color:T.bgEl,
-              border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
-              color:horizon===m.id?T.bgCard:T.mut,
-              borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
-              boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
-              <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
-              <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
-            </button>
-          ))}
-        </div>
-        {/* Row 2: HOLD + RADAR */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-          {SIGNAL_MODES.slice(3).map(m=>(
-            <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
-              background:horizon===m.id?m.color:T.bgEl,
-              border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
-              color:horizon===m.id?T.bgCard:T.mut,
-              borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
-              boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
-              <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
-              <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
-            </button>
-          ))}
-        </div>
-        {/* Mode description card */}
-        {(()=>{const m=SIGNAL_MODES.find(x=>x.id===horizon)||SIGNAL_MODES[1]; return (
-          <div style={{marginTop:10,background:m.bg,border:`1px solid ${m.color}25`,borderRadius:10,padding:"10px 12px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-              <span style={{fontSize:12,color:m.color,fontWeight:700}}>{m.icon} {m.label}</span>
-              <span style={{fontSize:10,color:m.color,background:`${m.color}20`,padding:"2px 8px",borderRadius:20,fontWeight:600}}>
-                Hold: {m.holdDesc}
-              </span>
-            </div>
-            <div style={{fontSize:11,color:T.txtMed,lineHeight:1.5,marginBottom:4}}>{m.desc}</div>
-            <div style={{fontSize:10,color:T.mut}}>e.g. {m.examples}</div>
+        {/* Signal Mode selector — 5 modes (also sticky) */}
+        <div style={{padding:"0 20px 14px",borderTop:`1px solid ${T.bdr}`}}>
+          <div style={{fontSize:11,fontWeight:700,color:T.mut,textTransform:"uppercase",letterSpacing:"0.08em",margin:"12px 0 10px"}}>
+            Signal Mode
           </div>
-        );})()}
-      </div>
-
-      {/* Top conviction */}
-      {top4.length>0&&(
-        <div style={{padding:"16px 20px 0"}}>
-          <div style={{fontSize:11,fontWeight:700,color:T.mut,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>
-            🔥 Top Conviction
-          </div>
-          <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:4}}>
-            {top4.map(s=>(
-              <div key={s.ticker} onClick={()=>onSelect(s)} style={{background:T.bgCard,
-                border:`1px solid ${T.bdrCard}`,borderRadius:14,padding:14,minWidth:148,
-                cursor:"pointer",flexShrink:0,boxShadow:T.shadow,transition:"all 0.15s"}}
-                onMouseEnter={e=>{e.currentTarget.style.borderColor=T.acc;e.currentTarget.style.transform="translateY(-2px)";}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bdrCard;e.currentTarget.style.transform="none";}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                  <span style={{fontSize:16,fontWeight:800,color:T.txt}}>{s.ticker}</span>
-                  <ScoreRing score={s.score||0} size={36}/>
-                </div>
-                <div style={{fontSize:10,color:T.mut,marginBottom:6,fontWeight:500}}>{s.sector||s.tier}</div>
-                <Sparkline data={s.sparkline||[]} color={(s.change||0)>=0?T.grn:T.red} h={28} w={118}/>
-                <div style={{fontSize:12,color:(s.change||0)>=0?T.grn:T.red,fontWeight:700,marginTop:5,
-                  background:(s.change||0)>=0?T.grnLight:T.redLight,padding:"2px 8px",borderRadius:20,display:"inline-block"}}>
-                  {s.change!==undefined?`${(s.change||0)>=0?"+":""}${Number(s.change).toFixed(2)}%`:"—"}
-                </div>
-              </div>
+          {/* Row 1: SURGE + SWING + POSITION */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+            {SIGNAL_MODES.slice(0,3).map(m=>(
+              <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
+                background:horizon===m.id?m.color:T.bgEl,
+                border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
+                color:horizon===m.id?T.bgCard:T.mut,
+                borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
+                boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
+                <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
+                <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
+              </button>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* Search + tier filter */}
-      <div style={{padding:"14px 20px 0"}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ticker or company..."
-          style={{width:"100%",background:T.bgCard,border:`1.5px solid ${T.bdr}`,borderRadius:12,
-            padding:"11px 16px",color:T.txt,fontSize:13,boxSizing:"border-box",outline:"none",
-            fontFamily:"inherit",boxShadow:T.shadow,marginBottom:10}}
-          onFocus={e=>e.target.style.borderColor=T.acc}
-          onBlur={e=>e.target.style.borderColor=T.bdr}/>
-        <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6}}>
-          {tiers.map(t=><Chip key={t} label={t} active={filter===t} onClick={()=>setFilter(t)}
-            color={t!=="ALL"?tierColor(t):T.acc}/>)}
+          {/* Row 2: HOLD + RADAR */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {SIGNAL_MODES.slice(3).map(m=>(
+              <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
+                background:horizon===m.id?m.color:T.bgEl,
+                border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
+                color:horizon===m.id?T.bgCard:T.mut,
+                borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
+                boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
+                <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
+                <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
+              </button>
+            ))}
+          </div>
+          {/* Mode description pill */}
+          {(()=>{const m=SIGNAL_MODES.find(x=>x.id===horizon)||SIGNAL_MODES[1]; return (
+            <div style={{marginTop:10,background:m.bg,border:`1px solid ${m.color}25`,borderRadius:10,padding:"10px 12px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                <span style={{fontSize:12,color:m.color,fontWeight:700}}>{m.icon} {m.label}</span>
+                <span style={{fontSize:10,color:m.color,background:`${m.color}20`,padding:"2px 8px",borderRadius:20,fontWeight:600}}>
+                  Hold: {m.holdDesc}
+                </span>
+              </div>
+              <div style={{fontSize:11,color:T.txtMed,lineHeight:1.5,marginBottom:4}}>{m.desc}</div>
+              <div style={{fontSize:10,color:T.mut}}>e.g. {m.examples}</div>
+            </div>
+          );})()}
         </div>
       </div>
+      {/* ─── END STICKY HEADER ─────────────────────────────────────────────── */}
 
-      {/* Signal list */}
-      <div style={{padding:"12px 20px 0"}}>
-        {loading&&signals.length===0
-          ?<><LoadingPulse/><LoadingPulse/><LoadingPulse/></>
-          :filtered.length===0
-          ?<EmptyState icon="📡" title="No signals match filter"
-              subtitle="Try ALL tier or clear search. Scan runs every 10 min during market hours."/>
-          :filtered.map(s=><SignalCard key={s.ticker||s.id} signal={s} onClick={()=>onSelect(s)}/>)}
+      {/* ─── SCROLLABLE CONTENT BELOW HEADER ──────────────────────────────────
+          overflowY:auto on this div means only this section scrolls.
+          The sticky header above stays pinned. Bottom nav stays pinned below.
+          paddingBottom:80 gives clearance above the bottom nav bar.              */}
+      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+
+        {/* Top conviction carousel */}
+        {top4.length>0&&(
+          <div style={{padding:"16px 20px 0"}}>
+            <div style={{fontSize:11,fontWeight:700,color:T.mut,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>
+              🔥 Top Conviction
+            </div>
+            <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
+              {top4.map(s=>(
+                <div key={s.ticker} onClick={()=>onSelect(s)} style={{background:T.bgCard,
+                  border:`1px solid ${T.bdrCard}`,borderRadius:14,padding:14,minWidth:148,
+                  cursor:"pointer",flexShrink:0,boxShadow:T.shadow,transition:"all 0.15s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=T.acc;e.currentTarget.style.transform="translateY(-2px)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bdrCard;e.currentTarget.style.transform="none";}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <span style={{fontSize:16,fontWeight:800,color:T.txt}}>{s.ticker}</span>
+                    <ScoreRing score={s.score||0} size={36}/>
+                  </div>
+                  <div style={{fontSize:10,color:T.mut,marginBottom:6,fontWeight:500}}>{s.sector||s.tier}</div>
+                  <Sparkline data={s.sparkline||[]} color={(s.change||0)>=0?T.grn:T.red} h={28} w={118}/>
+                  <div style={{fontSize:12,color:(s.change||0)>=0?T.grn:T.red,fontWeight:700,marginTop:5,
+                    background:(s.change||0)>=0?T.grnLight:T.redLight,padding:"2px 8px",borderRadius:20,display:"inline-block"}}>
+                    {s.change!==undefined?`${(s.change||0)>=0?"+":""}${Number(s.change).toFixed(2)}%`:"—"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Search + tier filter */}
+        <div style={{padding:"14px 20px 0"}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ticker or company..."
+            style={{width:"100%",background:T.bgCard,border:`1.5px solid ${T.bdr}`,borderRadius:12,
+              padding:"11px 16px",color:T.txt,fontSize:13,boxSizing:"border-box",outline:"none",
+              fontFamily:"inherit",boxShadow:T.shadow,marginBottom:10}}
+            onFocus={e=>e.target.style.borderColor=T.acc}
+            onBlur={e=>e.target.style.borderColor=T.bdr}/>
+          <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6,WebkitOverflowScrolling:"touch"}}>
+            {tiers.map(t=><Chip key={t} label={t} active={filter===t} onClick={()=>setFilter(t)}
+              color={t!=="ALL"?tierColor(t):T.acc}/>)}
+          </div>
+        </div>
+
+        {/* Signal list */}
+        <div style={{padding:"12px 20px 80px"}}>
+          {loading&&signals.length===0
+            ?<><LoadingPulse/><LoadingPulse/><LoadingPulse/></>
+            :filtered.length===0
+            ?<EmptyState icon="📡" title="No signals match filter"
+                subtitle="Try ALL tier or clear search. Scan runs every 10 min during market hours."/>
+            :filtered.map(s=><SignalCard key={s.ticker||s.id} signal={s} onClick={()=>onSelect(s)}/>)}
+        </div>
+
       </div>
+      {/* ─── END SCROLLABLE CONTENT ────────────────────────────────────────── */}
+
     </div>
   );
 };
