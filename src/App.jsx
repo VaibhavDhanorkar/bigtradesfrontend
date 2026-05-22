@@ -614,6 +614,7 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
   const [filter,setFilter]=useState("ALL");
   const [search,setSearch]=useState("");
   const [showFeatures,setShowFeatures]=useState(false);
+  const [showModeInfo,setShowModeInfo]=useState(false);
   const tiers=["ALL","SMALL","MID","LARGE","ETF","NANO"];
 
   const filtered=useMemo(()=>signals
@@ -683,8 +684,16 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
 
         {/* Signal Mode selector — 5 modes (also sticky) */}
         <div style={{padding:"0 20px 14px",borderTop:`1px solid ${T.bdr}`}}>
-          <div style={{fontSize:11,fontWeight:700,color:T.mut,textTransform:"uppercase",letterSpacing:"0.08em",margin:"12px 0 10px"}}>
-            Signal Mode
+          {/* Label row with ℹ️ toggle on the right */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",margin:"12px 0 10px"}}>
+            <span style={{fontSize:11,fontWeight:700,color:T.mut,textTransform:"uppercase",letterSpacing:"0.08em"}}>
+              Signal Mode
+            </span>
+            <button onClick={()=>setShowModeInfo(v=>!v)} title="What is each mode?"
+              style={{background:showModeInfo?T.accLight:"none",border:`1px solid ${showModeInfo?T.acc:T.bdr}`,
+                borderRadius:"50%",width:24,height:24,display:"flex",alignItems:"center",justifyContent:"center",
+                cursor:"pointer",fontSize:13,color:showModeInfo?T.acc:T.mut,flexShrink:0,
+                transition:"all 0.15s"}}>ⓘ</button>
           </div>
           {/* Row 1: SURGE + SWING + POSITION */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
@@ -714,8 +723,8 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
               </button>
             ))}
           </div>
-          {/* Mode description pill */}
-          {(()=>{const m=SIGNAL_MODES.find(x=>x.id===horizon)||SIGNAL_MODES[1]; return (
+          {/* Mode info panel — only shown when ℹ️ is toggled on */}
+          {showModeInfo&&(()=>{const m=SIGNAL_MODES.find(x=>x.id===horizon)||SIGNAL_MODES[1]; return (
             <div style={{marginTop:10,background:m.bg,border:`1px solid ${m.color}25`,borderRadius:10,padding:"10px 12px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                 <span style={{fontSize:12,color:m.color,fontWeight:700}}>{m.icon} {m.label}</span>
@@ -801,25 +810,31 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
 const CongressScreen = ({data,loading})=>{
   const hasData=data&&data.length>0;
   return (
-    <div style={{padding:"20px 20px 80px"}}>
-      <div style={{marginBottom:16}}>
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - env(safe-area-inset-top,0px) - 58px)"}}>
+
+      {/* ─── STICKY HEADER ─── */}
+      <div style={{position:"sticky",top:0,zIndex:100,flexShrink:0,
+        background:T.bgCard,borderBottom:`1px solid ${T.bdr}`,boxShadow:T.shadow,padding:"16px 20px 14px"}}>
         <div style={{fontSize:11,color:T.acc,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700}}>Intelligence</div>
         <div style={{fontSize:24,fontWeight:800,color:T.txt}}>Congressional Trades</div>
         <div style={{fontSize:12,color:T.mut,marginTop:2}}>
           {hasData?`${data.length} trades · Capitol Trades + Finnhub`:"STOCK Act disclosures · Live feed"}
         </div>
       </div>
-      <div style={{background:T.ambLight,border:`1px solid ${T.amb}30`,borderRadius:12,
-        padding:"11px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"center"}}>
-        <span>🏛</span>
-        <span style={{fontSize:12,color:T.amb,lineHeight:1.5,fontWeight:500}}>
-          Members disclose within 45 days. Committee-relevant buys have historically preceded major price moves.
-        </span>
-      </div>
-      {loading?<><LoadingPulse/><LoadingPulse/></>
-      :!hasData?<EmptyState icon="🏛" title="No congressional trades loaded"
-          subtitle={`Requires FINNHUB_API_KEY in server environment.\n\nDebug: ${API_BASE}/api/telegram/debug\nTest congress: ${API_BASE}/api/congress`}/>
-      :data.map((t,i)=>(
+
+      {/* ─── SCROLLABLE BODY ─── */}
+      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"16px 20px 80px"}}>
+        <div style={{background:T.ambLight,border:`1px solid ${T.amb}30`,borderRadius:12,
+          padding:"11px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"center"}}>
+          <span>🏛</span>
+          <span style={{fontSize:12,color:T.amb,lineHeight:1.5,fontWeight:500}}>
+            Members disclose within 45 days. Committee-relevant buys have historically preceded major price moves.
+          </span>
+        </div>
+        {loading?<><LoadingPulse/><LoadingPulse/></>
+        :!hasData?<EmptyState icon="🏛" title="No congressional trades loaded"
+            subtitle={`Requires FINNHUB_API_KEY in server environment.\n\nDebug: ${API_BASE}/api/telegram/debug\nTest congress: ${API_BASE}/api/congress`}/>
+        :data.map((t,i)=>(
         <div key={i} style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:16,
           padding:16,marginBottom:10,boxShadow:T.shadow}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
@@ -850,6 +865,7 @@ const CongressScreen = ({data,loading})=>{
           </div>
         </div>
       ))}
+      </div>{/* end scrollable */}
     </div>
   );
 };
@@ -858,12 +874,17 @@ const CongressScreen = ({data,loading})=>{
 const NewsScreen = ({data,loading})=>{
   const hasData=data&&data.length>0;
   return (
-    <div style={{padding:"20px 20px 80px"}}>
-      <div style={{marginBottom:16}}>
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - env(safe-area-inset-top,0px) - 58px)"}}>
+      {/* ─── STICKY HEADER ─── */}
+      <div style={{position:"sticky",top:0,zIndex:100,flexShrink:0,
+        background:T.bgCard,borderBottom:`1px solid ${T.bdr}`,boxShadow:T.shadow,
+        padding:"16px 20px 14px"}}>
         <div style={{fontSize:11,color:T.acc,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700}}>Catalyst Feed</div>
         <div style={{fontSize:24,fontWeight:800,color:T.txt}}>Market News</div>
         <div style={{fontSize:12,color:T.mut,marginTop:2}}>{hasData?`${data.length} articles · Finnhub`:"Live company news"}</div>
       </div>
+      {/* ─── SCROLLABLE BODY ─── */}
+      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"16px 20px 80px"}}>
       {loading?<><LoadingPulse lines={4}/></>
       :!hasData?<EmptyState icon="📰" title="No live news loaded"
           subtitle={`Requires FINNHUB_API_KEY in server environment.\n\nThe backend fetches Finnhub company news for all watchlist tickers every 5 minutes.\n\nTest: ${API_BASE}/api/news`}/>
@@ -890,6 +911,7 @@ const NewsScreen = ({data,loading})=>{
           <div style={{fontSize:11,color:T.dim}}>{n.source||""}</div>
         </div>
       ))}
+      </div>{/* end scrollable */}
     </div>
   );
 };
@@ -1111,6 +1133,7 @@ const SettingsScreen = ({connected,onSettingsSaved})=>{
         transition:"all 0.3s",boxShadow:saved?`0 4px 12px ${T.grn}40`:`0 4px 12px ${T.acc}40`}}>
         {saved?"✓ Saved!":"Save Settings"}
       </button>
+      </div>{/* end scrollable */}
     </div>
   );
 };
@@ -1157,15 +1180,18 @@ const PaperScreen = () => {
   };
 
   return (
-    <div style={{paddingBottom:80}}>
-      {/* Header */}
-      <div style={{background:T.bgCard,padding:"20px 20px 0",borderBottom:`1px solid ${T.bdr}`,boxShadow:T.shadow}}>
-        <div style={{fontSize:11,color:T.acc,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:700}}>BigTrades</div>
-        <div style={{fontSize:24,fontWeight:800,color:T.txt,marginBottom:14}}>Paper Trading</div>
+    <div style={{display:"flex",flexDirection:"column",height:"calc(100vh - env(safe-area-inset-top,0px) - 58px)"}}>
+      {/* Sticky header */}
+      <div style={{position:"sticky",top:0,zIndex:100,flexShrink:0,
+        background:T.bgCard,borderBottom:`1px solid ${T.bdr}`,boxShadow:T.shadow}}>
+        <div style={{padding:"16px 20px 0"}}>
+          <div style={{fontSize:11,color:T.acc,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:700}}>BigTrades</div>
+          <div style={{fontSize:24,fontWeight:800,color:T.txt,marginBottom:14}}>Paper Trading</div>
+        </div>
 
         {/* Summary strip */}
         {summary && (
-          <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:14}}>
+          <div style={{display:"flex",gap:8,overflowX:"auto",padding:"0 20px 14px",WebkitOverflowScrolling:"touch"}}>
             {[
               ["Total PnL", `${summary.total_realised_pnl>=0?"+":""}$${Math.abs(summary.total_realised_pnl||0).toFixed(0)}`, summary.total_realised_pnl>=0?T.grn:T.red],
               ["Win Rate", `${summary.overall_win_rate||0}%`, T.acc],
@@ -1182,7 +1208,7 @@ const PaperScreen = () => {
         )}
 
         {/* Tabs */}
-        <div style={{display:"flex",borderTop:`1px solid ${T.bdr}`,margin:"0 -20px"}}>
+        <div style={{display:"flex",borderTop:`1px solid ${T.bdr}`,margin:"0 0"}}>
           {[["overview","Portfolios"],["positions","Open"],["trades","Closed"],["analytics","Analytics"]].map(([k,l])=>(
             <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"12px 4px",fontSize:11,fontWeight:700,
               cursor:"pointer",background:"none",border:"none",
@@ -1192,8 +1218,11 @@ const PaperScreen = () => {
         </div>
       </div>
 
+      {/* Scrollable content */}
+      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+
       {/* Mode filter chips */}
-      <div style={{padding:"12px 20px 0",display:"flex",gap:8,overflowX:"auto",paddingBottom:4}}>
+      <div style={{padding:"12px 20px 0",display:"flex",gap:8,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
         {["ALL",...SIGNAL_MODES.map(m=>m.id)].map(id=>{
           const m = SIGNAL_MODES.find(x=>x.id===id);
           return <Chip key={id} label={m?`${m.icon} ${m.label}`:"All"} active={modeFilter===id}
@@ -1376,7 +1405,8 @@ const PaperScreen = () => {
           </div>
         )}
 
-      </div>
+      </div>{/* end inner padding div */}
+      </div>{/* end scrollable */}
     </div>
   );
 };
