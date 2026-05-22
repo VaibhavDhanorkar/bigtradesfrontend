@@ -1,58 +1,46 @@
-/**
- * BigTrades Service Worker — CORS-safe version
- *
- * ROOT CAUSE of sw.js errors:
- * The old sw.js was trying to cache API responses and return them as Response objects.
- * When a CORS error occurs, fetch() returns an "opaque" response that CANNOT be
- * converted to a cacheable Response — hence "Failed to convert value to 'Response'".
- * The SW was crashing on every API call, blocking ALL network requests.
- *
- * FIX: This SW only caches same-origin assets (the app shell).
- * ALL cross-origin API requests (api.bigtrades.veloxtrader.com) pass through
- * directly to the network — the SW never touches them.
- */
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
-const CACHE_NAME = 'bigtrades-shell-v5';
-const SHELL_ASSETS = ['/', '/index.html', '/manifest.json'];
+export default defineConfig({
+  plugins: [react()],
 
-// Install: cache the app shell only
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(SHELL_ASSETS))
-      .then(() => self.skipWaiting())
-  );
-});
+  // ── Service worker files must NOT be processed by Vite ──────────────────
+  // sw.js uses browser globals (self, caches, clients) that don't exist in
+  // Node.js. If Vite tries to bundle sw.js as an ESM module it throws:
+  //   ReferenceError: self is not defined
+  // Solution: sw.js lives in /public/ (Vite copies it verbatim, no processing)
+  // and is explicitly excluded from the build graph here as a safety net.
+  worker: {
+    format: 'es',
+  },
 
-// Activate: clear old caches
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
-});
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+      },
+    },
+  },
 
-// Fetch: CRITICAL — never intercept cross-origin API requests
-self.addEventListener('fetch', event => {
-  const url = new URL(event.request.url);
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+    // Exclude service worker from the Rollup bundle entirely
+    rollupOptions: {
+      input: {
+        main: './index.html',
+      },
+    },
+  },
 
-  // Let ALL cross-origin requests (API calls) go directly to network
-  // Do NOT cache, do NOT intercept — just pass through
-  if (url.origin !== self.location.origin) {
-    return; // no event.respondWith() = browser handles normally
-  }
-
-  // For same-origin requests: serve from cache, fall back to network
-  event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request).catch(() => {
-        // If offline and not cached, return the app shell for navigation requests
-        if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
-      });
-    })
-  );
-});
+  // Prevent Vite from pre-bundling or touching sw.js
+  optimizeDeps: {
+    exclude: ['sw.js'],
+  },
+})
