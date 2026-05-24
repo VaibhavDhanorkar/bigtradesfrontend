@@ -290,7 +290,7 @@ const AIChatPanel = ({context,onClose})=>{
     const q=input.trim(); setInput(""); setMsgs(m=>[...m,{role:"user",text:q}]); setLoading(true);
     const res=await api.post("/api/chat",{message:q,context});
     setLoading(false);
-    setMsgs(m=>[...m,{role:"ai",text:res?.response||"AI unavailable — check ANTHROPIC_API_KEY in your hosting environment."}]);
+    setMsgs(m=>[...m,{role:"ai",text:res?.response||"Signal AI unavailable — check LLM_BACKEND and its API key in your server environment."}]);
   };
   return (
     <div style={{position:"fixed",bottom:0,left:0,right:0,maxWidth:430,margin:"0 auto",zIndex:200,
@@ -426,9 +426,20 @@ const SignalDetail = ({signal,onClose})=>{
           <>
             <Sec icon="⚡" title="Primary Catalyst" color={T.acc}>
               <div style={{background:T.accLight,border:`1px solid ${T.acc}30`,borderRadius:12,padding:16}}>
-                <div style={{fontSize:14,color:T.txt,lineHeight:1.6}}>
-                  {s.catalyst_summary||"Awaiting AI enrichment — set ANTHROPIC_API_KEY in environment"}
-                </div>
+                {s.catalyst_summary
+                  ?<div style={{fontSize:14,color:T.txt,lineHeight:1.6}}>{s.catalyst_summary}</div>
+                  :<div>
+                      <div style={{fontSize:13,color:T.amb,lineHeight:1.6,marginBottom:10}}>
+                        ⏳ AI enrichment has not run for this signal yet.
+                      </div>
+                      <button onClick={refresh} disabled={refreshing}
+                        style={{background:refreshing?T.bgEl:T.gradA,border:"none",borderRadius:10,
+                          padding:"8px 16px",fontSize:12,fontWeight:700,
+                          color:refreshing?T.mut:T.bgCard,cursor:refreshing?"default":"pointer"}}>
+                        {refreshing?"↻ Enriching…":"↻ Run AI Enrichment"}
+                      </button>
+                    </div>
+                }
               </div>
             </Sec>
             <Sec icon="✅" title="Why This Conviction?" color={T.grn}>
