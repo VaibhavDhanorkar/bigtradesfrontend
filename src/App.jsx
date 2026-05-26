@@ -279,18 +279,25 @@ const TargetRow = ({label,price,pct,color})=>(
 );
 
 // ─── AI CHAT ─────────────────────────────────────────────────────────────────
-const AIChatPanel = ({context,onClose})=>{
-  const [msgs,setMsgs]=useState([{role:"ai",text:"Ask me anything about this signal — entry timing, risk sizing, catalyst analysis, or what to watch for."}]);
+const AIChatPanel = ({context,onClose,llmOk})=>{
+  const [msgs,setMsgs]=useState([{role:"ai",text:llmOk===false
+    ? "⚠️ Signal AI is not configured yet. Add OPENAI_API_KEY to your server .env file to enable chat."
+    : "Ask me anything about this signal — entry timing, risk sizing, catalyst analysis, or what to watch for."}]);
   const [input,setInput]=useState("");
   const [loading,setLoading]=useState(false);
   const bottomRef=useRef(null);
   useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"})},[msgs]);
   const send=async()=>{
     if(!input.trim()||loading) return;
+    if(llmOk===false){
+      setMsgs(m=>[...m,{role:"user",text:input.trim()},{role:"ai",text:"⚠️ Signal AI requires OPENAI_API_KEY. Add it to your server .env file to enable this feature."}]);
+      setInput(""); return;
+    }
     const q=input.trim(); setInput(""); setMsgs(m=>[...m,{role:"user",text:q}]); setLoading(true);
     const res=await api.post("/api/chat",{message:q,context});
     setLoading(false);
-    setMsgs(m=>[...m,{role:"ai",text:res?.response||"Signal AI unavailable — check LLM_BACKEND and its API key in your server environment."}]);
+    const reply = res?.response || "⚠️ Signal AI unavailable. Check OPENAI_API_KEY is set in your server .env file.";
+    setMsgs(m=>[...m,{role:"ai",text:reply}]);
   };
   return (
     <div style={{position:"fixed",bottom:0,left:0,right:0,maxWidth:430,margin:"0 auto",zIndex:200,
@@ -331,20 +338,15 @@ const AIChatPanel = ({context,onClose})=>{
 };
 
 // ─── SIGNAL DETAIL ────────────────────────────────────────────────────────────
-const SignalDetail = ({signal,onClose})=>{
+const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
   const [tab,setTab]=useState("overview");
   const [showChat,setShowChat]=useState(false);
-  const [refreshing,setRefreshing]=useState(false);
   const [s,setS]=useState(signal);
   const badge=levelBadge(s.level);
   const pos=(s.change||0)>=0;
-
-  const refresh=async()=>{
-    setRefreshing(true);
-    const fresh=await api.get(`/api/signals/${s.ticker}?refresh=true&mode=${s.signal_mode||"SWING"}`);
-    if(fresh&&!fresh.error) setS(fresh);
-    setRefreshing(false);
-  };
+  const isEnriched = !!(s.catalyst_summary);
+  // Live update when WebSocket pushes enrichment for this ticker
+  useEffect(()=>{setS(signal);},[signal]);
 
   const Sec = ({icon,title,color,children})=>(
     <div style={{marginBottom:22}}>
@@ -375,11 +377,16 @@ const SignalDetail = ({signal,onClose})=>{
           </div>
           <div style={{fontSize:12,color:T.mut,marginTop:1}}>{s.name}</div>
         </div>
-        <button onClick={refresh} disabled={refreshing} style={{background:T.bgEl,
-          border:`1px solid ${T.bdr}`,borderRadius:10,padding:"7px 12px",
-          color:T.mut,fontSize:11,cursor:"pointer",fontWeight:600}}>
-          {refreshing?"↻...":"↻ Refresh"}
-        </button>
+        {/* AI status pill — shows enrichment state, no manual trigger */}
+        <div style={{
+          background: isEnriched ? T.grnLight : llmOk===false ? T.redLight : T.ambLight,
+          border:`1px solid ${isEnriched?T.grn:llmOk===false?T.red:T.amb}30`,
+          borderRadius:20, padding:"5px 11px", fontSize:10, fontWeight:700,
+          color: isEnriched ? T.grn : llmOk===false ? T.red : T.amb,
+          whiteSpace:"nowrap"
+        }}>
+          {isEnriched ? "✓ AI Enriched" : llmOk===false ? "⚠ AI Offline" : "⏳ Enriching…"}
+        </div>
         <ScoreRing score={s.score||0} size={54}/>
       </div>
 
@@ -427,18 +434,24 @@ const SignalDetail = ({signal,onClose})=>{
             <Sec icon="⚡" title="Primary Catalyst" color={T.acc}>
               <div style={{background:T.accLight,border:`1px solid ${T.acc}30`,borderRadius:12,padding:16}}>
                 {s.catalyst_summary
-                  ?<div style={{fontSize:14,color:T.txt,lineHeight:1.6}}>{s.catalyst_summary}</div>
-                  :<div>
-                      <div style={{fontSize:13,color:T.amb,lineHeight:1.6,marginBottom:10}}>
-                        ⏳ AI enrichment has not run for this signal yet.
+                  ? <div style={{fontSize:14,color:T.txt,lineHeight:1.6}}>{s.catalyst_summary}</div>
+                  : llmOk===false
+                    ? <div style={{fontSize:13,color:T.red,lineHeight:1.6}}>
+                        <div style={{fontWeight:700,marginBottom:4}}>⚠️ AI Enrichment Offline</div>
+                        <div style={{color:T.txtMed}}>{llmError||"Add OPENAI_API_KEY to your server .env file to enable AI enrichment."}</div>
                       </div>
-                      <button onClick={refresh} disabled={refreshing}
-                        style={{background:refreshing?T.bgEl:T.gradA,border:"none",borderRadius:10,
-                          padding:"8px 16px",fontSize:12,fontWeight:700,
-                          color:refreshing?T.mut:T.bgCard,cursor:refreshing?"default":"pointer"}}>
-                        {refreshing?"↻ Enriching…":"↻ Run AI Enrichment"}
-                      </button>
-                    </div>
+                    : <div style={{display:"flex",alignItems:"center",gap:10,color:T.amb}}>
+                        <div style={{width:14,height:14,borderRadius:"50%",background:T.amb,
+                          animation:"pulse 1.2s infinite",flexShrink:0}}/>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:700,marginBottom:2}}>AI Enrichment Queued</div>
+                          <div style={{fontSize:12,color:T.mut}}>
+                            {s.score>=70
+                              ? "Analysis is running in the background — this card will update automatically."
+                              : `Score ${s.score}/100 is below the enrichment threshold (70). Enrichment runs on high-conviction signals only.`}
+                          </div>
+                        </div>
+                      </div>
                 }
               </div>
             </Sec>
@@ -452,7 +465,9 @@ const SignalDetail = ({signal,onClose})=>{
                     <span style={{fontSize:13,color:T.txt,lineHeight:1.6}}>{r}</span>
                   </div>
                 ))
-                :<div style={{fontSize:13,color:T.dim,fontStyle:"italic"}}>Awaiting LLM analysis</div>
+                :<div style={{fontSize:13,color:T.dim,fontStyle:"italic"}}>
+                    {llmOk===false ? "⚠ AI offline — add OPENAI_API_KEY to enable" : s.score>=70 ? "Running in background…" : `Score ${s.score}/100 below enrichment threshold`}
+                  </div>
               }
             </Sec>
             <Sec icon="⚠️" title="Risks" color={T.amb}>
@@ -463,7 +478,9 @@ const SignalDetail = ({signal,onClose})=>{
                     <span style={{fontSize:13,color:T.txtMed,lineHeight:1.6}}>{r}</span>
                   </div>
                 ))
-                :<div style={{fontSize:13,color:T.dim,fontStyle:"italic"}}>Awaiting analysis</div>
+                :<div style={{fontSize:13,color:T.dim,fontStyle:"italic"}}>
+                    {llmOk===false ? "⚠ AI offline" : s.score>=70 ? "Running in background…" : "Below enrichment threshold"}
+                  </div>
               }
             </Sec>
             {s.upside&&(
@@ -504,13 +521,17 @@ const SignalDetail = ({signal,onClose})=>{
                   <div style={{fontSize:24,fontWeight:800,color:T.txt}}>{fmt(s.entry?.high)}</div>
                 </div>
               </div>
-              {!s.entry?.low&&<div style={{fontSize:11,color:T.dim,textAlign:"center",marginTop:8,fontStyle:"italic"}}>Entry zones set after LLM enrichment</div>}
+              {!s.entry?.low&&<div style={{fontSize:11,color:T.dim,textAlign:"center",marginTop:8,fontStyle:"italic"}}>
+                {llmOk===false?"⚠ AI offline — entry zones unavailable":s.score>=70?"Entry zones generating in background…":"Below enrichment threshold (score 70+)"}
+              </div>}
             </Sec>
             <Sec icon="📈" title="Targets" color={T.grn}>
               <TargetRow label="TP1" price={s.targets?.tp1} pct={s.targets?.tp1pct} color={T.grn}/>
               <TargetRow label="TP2" price={s.targets?.tp2} pct={s.targets?.tp2pct} color={T.acc}/>
               <TargetRow label="Stop Loss" price={s.targets?.stop} pct={s.targets?.stopPct?-Number(s.targets.stopPct):undefined} color={T.red}/>
-              {!s.targets?.tp1&&<div style={{fontSize:11,color:T.dim,textAlign:"center",fontStyle:"italic"}}>Price targets set after LLM enrichment</div>}
+              {!s.targets?.tp1&&<div style={{fontSize:11,color:T.dim,textAlign:"center",fontStyle:"italic"}}>
+                {llmOk===false?"⚠ AI offline — targets unavailable":s.score>=70?"Price targets generating in background…":"Below enrichment threshold (score 70+)"}
+              </div>}
             </Sec>
             <Sec icon="⚖️" title="Risk / Reward" color={T.amb}>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
@@ -613,7 +634,7 @@ const SignalDetail = ({signal,onClose})=>{
           <span>✦</span> Ask Signal AI
         </button>
       </div>
-      {showChat&&<AIChatPanel context={s} onClose={()=>setShowChat(false)}/>}
+      {showChat&&<AIChatPanel context={s} onClose={()=>setShowChat(false)} llmOk={llmOk}/>}
     </div>
   );
 };
@@ -1104,7 +1125,12 @@ const SettingsScreen = ({connected,onSettingsSaved})=>{
             {[
               ["API",health.status==="healthy"?"Online ✓":"Offline ✗",health.status==="healthy"?T.grn:T.red],
               ["WebSocket",connected?"Connected":"Disconnected",connected?T.grn:T.amb],
-              ["LLM",health.llm_configured?"✓ Ready":"✗ Key missing",health.llm_configured?T.grn:T.red],
+              ["LLM",
+                health.llm_live_status?.ok===true ? "✓ Working" :
+                health.llm_live_status?.ok===false ? "✗ " + (health.llm_live_status.error||"Error").slice(0,30) :
+                health.llm_configured ? "⏳ Pending first call" : "✗ Key missing",
+                health.llm_live_status?.ok===true ? T.grn :
+                health.llm_live_status?.ok===false ? T.red : T.amb],
               ["Telegram",health.telegram_configured?"✓ Ready":"✗ Keys missing",health.telegram_configured?T.grn:T.red],
               ["Finnhub",health.finnhub_configured?"✓ Ready":"✗ Key missing",health.finnhub_configured?T.grn:T.red],
               ["Signals",`${health.signals_in_db||0} in DB`,T.acc],
@@ -1516,6 +1542,8 @@ export default function App() {
   const [loading,setLoading]     = useState(true);
   const [toast,setToast]         = useState(null);
   const [refreshing,setRefreshing] = useState(false); // B: manual refresh spinner
+  const [llmOk,setLlmOk]           = useState(null);   // null=unknown, true=working, false=offline
+  const [llmError,setLlmError]      = useState(null);   // human-readable error from /api/health
   const horizon    = mode;
   const setHorizon = setMode;
 
@@ -1574,6 +1602,16 @@ export default function App() {
     };
     load();
 
+    // Poll /api/health once on mount to get LLM status for soft-error display
+    api.get("/api/health").then(h=>{
+      if(!h) return;
+      const live = h.llm_live_status;
+      if(live?.ok===true)  { setLlmOk(true);  setLlmError(null); }
+      else if(live?.ok===false){ setLlmOk(false); setLlmError(live.error||"AI backend error"); }
+      else if(h.llm_configured===false){ setLlmOk(false); setLlmError("OPENAI_API_KEY not set in server .env"); }
+      else { setLlmOk(null); } // key is set but no call made yet — show "pending"
+    });
+
     // Smart interval: 10 min during market hours, 30 min off-hours
     // Uses self-scheduling setTimeout so each tick re-evaluates market status
     const MARKET_MS   = 10 * 60 * 1000;
@@ -1604,7 +1642,12 @@ export default function App() {
       {screen==="paper"     &&<PaperScreen/>}
       {screen==="settings"  &&<SettingsScreen connected={connected} onSettingsSaved={()=>showToast("✓ Settings saved")}/>}
 
-      {selected&&<SignalDetail signal={selected} onClose={()=>setSelected(null)}/>}
+      {selected&&<SignalDetail
+        signal={signals.find(s=>s.ticker===selected.ticker&&s.signal_mode===selected.signal_mode)||selected}
+        onClose={()=>setSelected(null)}
+        llmOk={llmOk}
+        llmError={llmError}
+      />}
       {!selected&&<BottomNav active={screen} onChange={setScreen}/>}
 
       {toast&&(
