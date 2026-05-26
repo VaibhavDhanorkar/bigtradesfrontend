@@ -1029,7 +1029,7 @@ const SettingsScreen = ({connected,onSettingsSaved})=>{
 
   const [tgToken,setTgToken]=useState("");
   const [tgChat,setTgChat]=useState("");
-  const [threshold,setThreshold]=useState(45);
+  const [threshold,setThreshold]=useState();
   const [llm,setLlm]=useState("anthropic");
   const [saved,setSaved]=useState(false);
   const [testing,setTesting]=useState(false);
