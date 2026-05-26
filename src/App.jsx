@@ -405,7 +405,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
             color: isEnriched ? T.grn : llmOk===false ? T.red : T.amb,
             whiteSpace:"nowrap"
           }}>
-            {isEnriched ? "✓ AI Enriched" : llmOk===false ? "⚠ AI Offline" : "⏳ Enriching…"}
+            {isEnriched ? "✓ AI Enriched" : llmOk===false ? "⚠ AI Offline" : llmOk===true ? "⏳ Queued" : "✦ AI Ready"}
           </div>
           {isEnriched && s.enriched_at && (
             <div style={{fontSize:9,color:T.dim,textAlign:"right"}}>
@@ -472,9 +472,9 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
                         <div>
                           <div style={{fontSize:13,fontWeight:700,marginBottom:2}}>AI Enrichment Queued</div>
                           <div style={{fontSize:12,color:T.mut}}>
-                            {s.score>=70
-                              ? "Analysis is running in the background — this card will update automatically."
-                              : `Score ${s.score}/100 is below the enrichment threshold (70). Enrichment runs on high-conviction signals only.`}
+                            {s.score>=40
+                              ? "Enrichment will run on the next scan cycle and update this card automatically."
+                              : `Score ${s.score}/100. Enrichment fires automatically when score reaches 40+.`}
                           </div>
                         </div>
                       </div>
@@ -492,7 +492,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
                   </div>
                 ))
                 :<div style={{fontSize:13,color:T.dim,fontStyle:"italic"}}>
-                    {llmOk===false ? "⚠ AI offline — add OPENAI_API_KEY to enable" : s.score>=44 ? "Running in background…" : `Score ${s.score}/100 below enrichment threshold`}
+                    {llmOk===false ? "⚠ AI offline — add OPENAI_API_KEY to enable" : s.score>=40 ? "Enrichment queued — updates automatically on next scan" : `Score ${s.score}/100 below enrichment threshold (40+)`}
                   </div>
               }
             </Sec>
@@ -505,7 +505,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
                   </div>
                 ))
                 :<div style={{fontSize:13,color:T.dim,fontStyle:"italic"}}>
-                    {llmOk===false ? "⚠ AI offline" : s.score>=44 ? "Running in background…" : "Below enrichment threshold"}
+                    {llmOk===false ? "⚠ AI offline" : s.score>=40 ? "Enrichment queued" : "Below enrichment threshold (score 40+)"}
                   </div>
               }
             </Sec>
@@ -548,7 +548,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
                 </div>
               </div>
               {!s.entry?.low&&<div style={{fontSize:11,color:T.dim,textAlign:"center",marginTop:8,fontStyle:"italic"}}>
-                {llmOk===false?"⚠ AI offline — entry zones unavailable":s.score>=44?"Entry zones generating in background…":"Below threshold (45+ watchlist, 55+ all)"}
+                {llmOk===false?"⚠ AI offline — entry zones unavailable":s.score>=40?"Entry zones will populate after AI enrichment":"Below enrichment threshold"}
               </div>}
             </Sec>
             <Sec icon="📈" title="Targets" color={T.grn}>
@@ -556,7 +556,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
               <TargetRow label="TP2" price={s.targets?.tp2} pct={s.targets?.tp2pct} color={T.acc}/>
               <TargetRow label="Stop Loss" price={s.targets?.stop} pct={s.targets?.stopPct?-Number(s.targets.stopPct):undefined} color={T.red}/>
               {!s.targets?.tp1&&<div style={{fontSize:11,color:T.dim,textAlign:"center",fontStyle:"italic"}}>
-                {llmOk===false?"⚠ AI offline — targets unavailable":s.score>=44?"Price targets generating in background…":"Below threshold (45+ watchlist, 55+ all)"}
+                {llmOk===false?"⚠ AI offline — targets unavailable":s.score>=40?"Price targets will populate after AI enrichment":"Below enrichment threshold"}
               </div>}
             </Sec>
             <Sec icon="⚖️" title="Risk / Reward" color={T.amb}>
