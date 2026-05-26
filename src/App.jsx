@@ -1668,3 +1668,134 @@ export default function App() {
     </div>
   );
 }
+
+
+/* ─── PHASE 1: MACRO + AI DIAGNOSTICS ───────────────────────────────────── */
+
+const FreshnessBadge = ({ts})=>{
+  if(!ts) return null;
+  const mins = Math.floor((Date.now() - new Date(ts).getTime())/60000);
+  const stale = mins > 240;
+
+  return (
+    <div style={{
+      fontSize:11,
+      padding:"4px 8px",
+      borderRadius:20,
+      background: stale ? T.redLight : T.grnLight,
+      color: stale ? T.red : T.grn,
+      border:`1px solid ${stale ? T.red : T.grn}30`,
+      fontWeight:700
+    }}>
+      {stale ? "STALE" : "FRESH"} · {fmtRelTime(ts)}
+    </div>
+  );
+};
+
+const MacroRegimeCard = ({macro})=>{
+  if(!macro) return null;
+
+  return (
+    <div style={{
+      background:T.bgCard,
+      border:`1px solid ${T.bdr}`,
+      borderRadius:18,
+      padding:18,
+      marginBottom:18,
+      boxShadow:T.shadow
+    }}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+        <div>
+          <div style={{fontSize:13,fontWeight:800,color:T.txt}}>Macro Regime</div>
+          <div style={{fontSize:11,color:T.mut}}>
+            {macro.risk_mode} · Fed {macro.fed_stance}
+          </div>
+        </div>
+
+        <FreshnessBadge ts={macro.updated_at}/>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <div style={{background:T.bgEl,padding:12,borderRadius:12}}>
+          <div style={{fontSize:11,color:T.mut}}>10Y Treasury</div>
+          <div style={{fontSize:18,fontWeight:800,color:T.txt}}>
+            {macro.treasury_10y || "—"}%
+          </div>
+          <div style={{fontSize:11,color:T.acc}}>
+            {macro.treasury_trend}
+          </div>
+        </div>
+
+        <div style={{background:T.bgEl,padding:12,borderRadius:12}}>
+          <div style={{fontSize:11,color:T.mut}}>VIX</div>
+          <div style={{fontSize:18,fontWeight:800,color:T.txt}}>
+            {macro.vix || "—"}
+          </div>
+          <div style={{fontSize:11,color:T.acc}}>
+            {macro.vix_regime}
+          </div>
+        </div>
+      </div>
+
+      <div style={{marginTop:14,fontSize:12,color:T.txtMed}}>
+        <strong>Strongest:</strong> {(macro.strongest_sectors||[]).join(", ")}
+      </div>
+
+      <div style={{marginTop:6,fontSize:12,color:T.txtMed}}>
+        <strong>Weakest:</strong> {(macro.weakest_sectors||[]).join(", ")}
+      </div>
+    </div>
+  );
+};
+
+const AIDiagnosticsPanel = ({health})=>(
+  <div style={{
+    background:T.bgCard,
+    border:`1px solid ${T.bdr}`,
+    borderRadius:16,
+    padding:16,
+    marginBottom:18
+  }}>
+    <div style={{display:"flex",justifyContent:"space-between"}}>
+      <div>
+        <div style={{fontSize:13,fontWeight:800,color:T.txt}}>AI Diagnostics</div>
+        <div style={{fontSize:11,color:T.mut}}>
+          GPT-4o-mini enrichment engine
+        </div>
+      </div>
+
+      <div style={{
+        fontSize:11,
+        fontWeight:700,
+        color:health?.ok ? T.grn : T.red
+      }}>
+        {health?.ok ? "ONLINE" : "DEGRADED"}
+      </div>
+    </div>
+
+    <div style={{marginTop:10,fontSize:12,color:T.txtMed}}>
+      Backend: {health?.backend || "gpt-4o-mini"}
+    </div>
+
+    <div style={{marginTop:4,fontSize:12,color:T.txtMed}}>
+      Model: {health?.model || "gpt-4o-mini"}
+    </div>
+
+    {!!health?.error && (
+      <div style={{marginTop:8,fontSize:11,color:T.red}}>
+        {health.error}
+      </div>
+    )}
+  </div>
+);
+
+
+/* ─── PHASE 1 UI NOTES ──────────────────────────────────────────────────────
+Added:
+- macro regime dashboard card
+- AI diagnostics panel
+- enrichment freshness badges
+- persistent AI enrichment rendering support
+- graceful stale/offline states
+- institutional Telegram-ready UI foundations
+*/
