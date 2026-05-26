@@ -345,6 +345,21 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
   const badge=levelBadge(s.level);
   const pos=(s.change||0)>=0;
   const isEnriched = !!(s.catalyst_summary);
+
+  // On mount: if no enrichment in signal, fetch from /api/enrich/{ticker}
+  // This ensures enrichment persists across weekends/restarts
+  useEffect(()=>{
+    if(!signal.catalyst_summary && (Config?.OPENAI || llmOk!==false)){
+      api.get(`/api/enrich/${signal.ticker}?mode=${signal.signal_mode||"SWING"}`).then(r=>{
+        if(r?.ok && r.enrichment){
+          setS(prev=>({...prev,...r.enrichment,
+            enriched_at: r.enrichment.enriched_at,
+            enrichment_model: r.enrichment.enrichment_model}));
+        }
+      });
+    }
+  },[signal.ticker]);
+
   // Live update when WebSocket pushes enrichment for this ticker
   useEffect(()=>{setS(signal);},[signal]);
 
@@ -377,15 +392,22 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
           </div>
           <div style={{fontSize:12,color:T.mut,marginTop:1}}>{s.name}</div>
         </div>
-        {/* AI status pill — shows enrichment state, no manual trigger */}
-        <div style={{
-          background: isEnriched ? T.grnLight : llmOk===false ? T.redLight : T.ambLight,
-          border:`1px solid ${isEnriched?T.grn:llmOk===false?T.red:T.amb}30`,
-          borderRadius:20, padding:"5px 11px", fontSize:10, fontWeight:700,
-          color: isEnriched ? T.grn : llmOk===false ? T.red : T.amb,
-          whiteSpace:"nowrap"
-        }}>
-          {isEnriched ? "✓ AI Enriched" : llmOk===false ? "⚠ AI Offline" : "⏳ Enriching…"}
+        {/* AI status pill — shows enrichment state + freshness */}
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2}}>
+          <div style={{
+            background: isEnriched ? T.grnLight : llmOk===false ? T.redLight : T.ambLight,
+            border:`1px solid ${isEnriched?T.grn:llmOk===false?T.red:T.amb}30`,
+            borderRadius:20, padding:"5px 11px", fontSize:10, fontWeight:700,
+            color: isEnriched ? T.grn : llmOk===false ? T.red : T.amb,
+            whiteSpace:"nowrap"
+          }}>
+            {isEnriched ? "✓ AI Enriched" : llmOk===false ? "⚠ AI Offline" : "⏳ Enriching…"}
+          </div>
+          {isEnriched && s.enriched_at && (
+            <div style={{fontSize:9,color:T.dim,textAlign:"right"}}>
+              {s.enrichment_model||"gpt-4o-mini"} · {fmtRelTime(s.enriched_at)}
+            </div>
+          )}
         </div>
         <ScoreRing score={s.score||0} size={54}/>
       </div>
@@ -522,7 +544,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
                 </div>
               </div>
               {!s.entry?.low&&<div style={{fontSize:11,color:T.dim,textAlign:"center",marginTop:8,fontStyle:"italic"}}>
-                {llmOk===false?"⚠ AI offline — entry zones unavailable":s.score>=44?"Entry zones generating in background…":"Below enrichment threshold (score 70+)"}
+                {llmOk===false?"⚠ AI offline — entry zones unavailable":s.score>=44?"Entry zones generating in background…":"Below threshold (45+ watchlist, 55+ all)"}
               </div>}
             </Sec>
             <Sec icon="📈" title="Targets" color={T.grn}>
@@ -530,7 +552,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
               <TargetRow label="TP2" price={s.targets?.tp2} pct={s.targets?.tp2pct} color={T.acc}/>
               <TargetRow label="Stop Loss" price={s.targets?.stop} pct={s.targets?.stopPct?-Number(s.targets.stopPct):undefined} color={T.red}/>
               {!s.targets?.tp1&&<div style={{fontSize:11,color:T.dim,textAlign:"center",fontStyle:"italic"}}>
-                {llmOk===false?"⚠ AI offline — targets unavailable":s.score>=44?"Price targets generating in background…":"Below enrichment threshold (score 70+)"}
+                {llmOk===false?"⚠ AI offline — targets unavailable":s.score>=44?"Price targets generating in background…":"Below threshold (45+ watchlist, 55+ all)"}
               </div>}
             </Sec>
             <Sec icon="⚖️" title="Risk / Reward" color={T.amb}>
