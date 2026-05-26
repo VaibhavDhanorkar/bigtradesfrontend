@@ -466,7 +466,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
                   </div>
                 ))
                 :<div style={{fontSize:13,color:T.dim,fontStyle:"italic"}}>
-                    {llmOk===false ? "⚠ AI offline — add OPENAI_API_KEY to enable" : s.score>=70 ? "Running in background…" : `Score ${s.score}/100 below enrichment threshold`}
+                    {llmOk===false ? "⚠ AI offline — add OPENAI_API_KEY to enable" : s.score>=44 ? "Running in background…" : `Score ${s.score}/100 below enrichment threshold`}
                   </div>
               }
             </Sec>
@@ -479,7 +479,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
                   </div>
                 ))
                 :<div style={{fontSize:13,color:T.dim,fontStyle:"italic"}}>
-                    {llmOk===false ? "⚠ AI offline" : s.score>=70 ? "Running in background…" : "Below enrichment threshold"}
+                    {llmOk===false ? "⚠ AI offline" : s.score>=44 ? "Running in background…" : "Below enrichment threshold"}
                   </div>
               }
             </Sec>
@@ -522,7 +522,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
                 </div>
               </div>
               {!s.entry?.low&&<div style={{fontSize:11,color:T.dim,textAlign:"center",marginTop:8,fontStyle:"italic"}}>
-                {llmOk===false?"⚠ AI offline — entry zones unavailable":s.score>=70?"Entry zones generating in background…":"Below enrichment threshold (score 70+)"}
+                {llmOk===false?"⚠ AI offline — entry zones unavailable":s.score>=44?"Entry zones generating in background…":"Below enrichment threshold (score 70+)"}
               </div>}
             </Sec>
             <Sec icon="📈" title="Targets" color={T.grn}>
@@ -530,7 +530,7 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
               <TargetRow label="TP2" price={s.targets?.tp2} pct={s.targets?.tp2pct} color={T.acc}/>
               <TargetRow label="Stop Loss" price={s.targets?.stop} pct={s.targets?.stopPct?-Number(s.targets.stopPct):undefined} color={T.red}/>
               {!s.targets?.tp1&&<div style={{fontSize:11,color:T.dim,textAlign:"center",fontStyle:"italic"}}>
-                {llmOk===false?"⚠ AI offline — targets unavailable":s.score>=70?"Price targets generating in background…":"Below enrichment threshold (score 70+)"}
+                {llmOk===false?"⚠ AI offline — targets unavailable":s.score>=44?"Price targets generating in background…":"Below enrichment threshold (score 70+)"}
               </div>}
             </Sec>
             <Sec icon="⚖️" title="Risk / Reward" color={T.amb}>
