@@ -339,29 +339,33 @@ const AIChatPanel = ({context,onClose,llmOk})=>{
 
 // ─── SIGNAL DETAIL ────────────────────────────────────────────────────────────
 const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
+  // All hooks must be declared first (React rules of hooks)
   const [tab,setTab]=useState("overview");
   const [showChat,setShowChat]=useState(false);
-  const [s,setS]=useState(signal);
-  const badge=levelBadge(s.level);
-  const pos=(s.change||0)>=0;
-  const isEnriched = !!(s.catalyst_summary);
+  const [s,setS]=useState(signal||{});
 
-  // On mount: if no enrichment in signal, fetch from /api/enrich/{ticker}
-  // This ensures enrichment persists across weekends/restarts
+  // On mount: fetch persisted enrichment from DB if signal has none yet.
   useEffect(()=>{
-    if(!signal.catalyst_summary && (Config?.OPENAI || llmOk!==false)){
+    if(!signal?.catalyst_summary && signal?.ticker && llmOk!==false){
       api.get(`/api/enrich/${signal.ticker}?mode=${signal.signal_mode||"SWING"}`).then(r=>{
         if(r?.ok && r.enrichment){
           setS(prev=>({...prev,...r.enrichment,
             enriched_at: r.enrichment.enriched_at,
             enrichment_model: r.enrichment.enrichment_model}));
         }
-      });
+      }).catch(()=>{});
     }
-  },[signal.ticker]);
+  },[signal?.ticker]);
 
   // Live update when WebSocket pushes enrichment for this ticker
-  useEffect(()=>{setS(signal);},[signal]);
+  useEffect(()=>{if(signal) setS(signal);},[signal]);
+
+  // Null guard AFTER hooks — safe render bail-out
+  if(!signal || !signal.ticker) return null;
+
+  const badge=levelBadge(s.level);
+  const pos=(s.change||0)>=0;
+  const isEnriched = !!(s.catalyst_summary);
 
   const Sec = ({icon,title,color,children})=>(
     <div style={{marginBottom:22}}>
@@ -1665,7 +1669,12 @@ export default function App() {
       {screen==="settings"  &&<SettingsScreen connected={connected} onSettingsSaved={()=>showToast("✓ Settings saved")}/>}
 
       {selected&&<SignalDetail
-        signal={signals.find(s=>s.ticker===selected.ticker&&s.signal_mode===selected.signal_mode)||selected}
+        signal={
+          // Try exact match (ticker + mode), then ticker-only, then the selected object
+          signals.find(s=>s.ticker===selected.ticker&&s.signal_mode===selected.signal_mode)
+          || signals.find(s=>s.ticker===selected.ticker)
+          || selected
+        }
         onClose={()=>setSelected(null)}
         llmOk={llmOk}
         llmError={llmError}
