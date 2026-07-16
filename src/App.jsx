@@ -1,10 +1,14 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
 // ─── API CONFIG ───────────────────────────────────────────────────────────────
-const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL)
-  ? import.meta.env.VITE_API_URL
-  : "https://api.bigtrades.veloxtrader.com";
-const WS_BASE = API_BASE.replace("https://","wss://").replace("http://","ws://");
+// In dev, use relative URLs so Vite proxy forwards /api and /ws to local backend.
+// Set VITE_API_URL only when pointing at a remote API (e.g. production).
+const API_BASE = (import.meta.env.VITE_API_URL && import.meta.env.VITE_API_URL.trim())
+  ? import.meta.env.VITE_API_URL.trim()
+  : (import.meta.env.DEV ? "" : "https://api.bigtrades.veloxtrader.com");
+const WS_BASE = API_BASE
+  ? API_BASE.replace("https://","wss://").replace("http://","ws://")
+  : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 
 // ─── IVORY + LIGHT ORANGE THEME ──────────────────────────────────────────────
 const T = {
@@ -66,8 +70,21 @@ const fmtRR = (val) => {
 // ─── API CLIENT ───────────────────────────────────────────────────────────────
 const api = {
   async get(path) {
-    try { const r=await fetch(`${API_BASE}${path}`); if(!r.ok) throw new Error(`${r.status}`); return r.json(); }
-    catch(e){ console.warn(`GET ${path}:`,e.message); return null; }
+    const url = `${API_BASE}${path}`;
+    try {
+      const r = await fetch(url);
+      // #region agent log
+      fetch('http://127.0.0.1:7563/ingest/ffd7a113-a8bd-4db1-979a-ab94cb6829aa',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c2a025'},body:JSON.stringify({sessionId:'c2a025',hypothesisId:'A',location:'App.jsx:api.get',message:'fetch result',data:{url,status:r.status,ok:r.ok,apiBase:API_BASE||'(proxy)'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      if (!r.ok) throw new Error(`${r.status}`);
+      return r.json();
+    } catch (e) {
+      // #region agent log
+      fetch('http://127.0.0.1:7563/ingest/ffd7a113-a8bd-4db1-979a-ab94cb6829aa',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c2a025'},body:JSON.stringify({sessionId:'c2a025',hypothesisId:'B',location:'App.jsx:api.get',message:'fetch error',data:{url,error:e.message,apiBase:API_BASE||'(proxy)'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      console.warn(`GET ${path}:`, e.message);
+      return null;
+    }
   },
   async post(path,body) {
     try { const r=await fetch(`${API_BASE}${path}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(`${r.status}`); return r.json(); }
@@ -346,16 +363,22 @@ const SignalDetail = ({signal,onClose,llmOk,llmError})=>{
 
   // On mount: fetch persisted enrichment from DB if signal has none yet.
   useEffect(()=>{
-    if(!signal?.catalyst_summary && signal?.ticker && llmOk!==false){
+    if(signal?.ticker && llmOk!==false){
       api.get(`/api/enrich/${signal.ticker}?mode=${signal.signal_mode||"SWING"}`).then(r=>{
         if(r?.ok && r.enrichment){
-          setS(prev=>({...prev,...r.enrichment,
+          setS(prev=>({
+            ...prev,
+            ...r.enrichment,
             enriched_at: r.enrichment.enriched_at,
-            enrichment_model: r.enrichment.enrichment_model}));
+            enrichment_model: r.enrichment.enrichment_model,
+            ...(r.signal_score!=null?{score:r.signal_score}:{}),
+            ...(r.level?{level:r.level}:{}),
+            ...(r.breakdown?{breakdown:r.breakdown}:{}),
+          }));
         }
       }).catch(()=>{});
     }
-  },[signal?.ticker]);
+  },[signal?.ticker, signal?.signal_mode, llmOk]);
 
   // Live update when WebSocket pushes enrichment for this ticker
   useEffect(()=>{if(signal) setS(signal);},[signal]);
@@ -727,8 +750,15 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
   const [filter,setFilter]=useState("ALL");
   const [search,setSearch]=useState("");
   const [showFeatures,setShowFeatures]=useState(false);
-  const [showModeInfo,setShowModeInfo]=useState(false); // A2: hidden by default, toggled by ℹ️
+  const [showModeInfo,setShowModeInfo]=useState(false);
+  const [hoveredMode,setHoveredMode]=useState(null);
+  const [showSearch,setShowSearch]=useState(false);
+  const searchRef=useRef(null);
   const tiers=["ALL","SMALL","MID","LARGE","ETF","NANO"];
+
+  useEffect(()=>{
+    if(showSearch) searchRef.current?.focus();
+  },[showSearch]);
 
   const marketOpen = isMarketOpen();
   // Find the most recent updated_at across all signals for staleness display
@@ -786,7 +816,7 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
           ["VIX",market?.vix?.toFixed?.(1)||"—",market?.sentiment==="RISK-ON"?T.grn:market?.sentiment==="RISK-OFF"?T.red:T.amb],
           ["Sentiment",market?.sentiment||"—",market?.sentiment==="RISK-ON"?T.grn:T.amb],
         ].map(([l,v,c])=>(
-          <div key={l} style={{background:T.bgEl,border:`1px solid ${T.bdr}`,borderRadius:10,padding:"8px 14px",flexShrink:0}}>
+          <div key={l} style={{background:T.bgEl,border:`1px solid ${T.bdr}`,borderRadius:10,padding:"6px 10px",flexShrink:0}}>
             <div style={{fontSize:10,color:T.mut,fontWeight:500}}>{l}</div>
             <div style={{fontSize:14,fontWeight:700,color:c||T.txt}}>{v}</div>
           </div>
@@ -795,13 +825,12 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
 
       {/* Signal Mode selector */}
       <div style={{padding:"0 20px 14px",borderTop:`1px solid ${T.bdr}`}}>
-        {/* Label row with ℹ️ toggle on the right — A2 */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",margin:"12px 0 10px"}}>
           <div style={{fontSize:11,fontWeight:700,color:T.mut,textTransform:"uppercase",letterSpacing:"0.08em"}}>
-            Signal Mode
+            {`Signal Mode — ${activeMode.label}`}
           </div>
           <button onClick={()=>setShowModeInfo(v=>!v)}
-            title="About signal modes"
+            title="Show signal mode tiles"
             style={{background:showModeInfo?T.acc:T.bgEl,border:`1px solid ${showModeInfo?T.acc:T.bdr}`,
               borderRadius:"50%",width:24,height:24,display:"flex",alignItems:"center",
               justifyContent:"center",cursor:"pointer",color:showModeInfo?T.bgCard:T.mut,
@@ -810,48 +839,35 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
           </button>
         </div>
 
-        {/* Mode info panel — only visible when ℹ️ toggled on — A2 */}
-        {showModeInfo&&(
-          <div style={{marginBottom:10,background:activeMode.bg,border:`1px solid ${activeMode.color}25`,
-            borderRadius:10,padding:"10px 12px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-              <span style={{fontSize:12,color:activeMode.color,fontWeight:700}}>{activeMode.icon} {activeMode.label}</span>
-              <span style={{fontSize:10,color:activeMode.color,background:`${activeMode.color}20`,
-                padding:"2px 8px",borderRadius:20,fontWeight:600}}>Hold: {activeMode.holdDesc}</span>
-            </div>
-            <div style={{fontSize:11,color:T.txtMed,lineHeight:1.5,marginBottom:4}}>{activeMode.desc}</div>
-            <div style={{fontSize:10,color:T.mut}}>e.g. {activeMode.examples}</div>
+        {showModeInfo && (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5, 1fr)",gap:6,marginBottom:8,overflow:"visible"}}>
+            {SIGNAL_MODES.map(m=>(
+              <div key={m.id} style={{position:"relative"}}
+                onMouseEnter={()=>setHoveredMode(m.id)}
+                onMouseLeave={()=>setHoveredMode(null)}>
+                <button onClick={()=>setHorizon(m.id)} style={{
+                  width:"100%",
+                  background:horizon===m.id?m.color:T.bgEl,
+                  border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
+                  color:horizon===m.id?T.bgCard:T.mut,
+                  borderRadius:10,padding:"6px 3px",cursor:"pointer",transition:"all 0.15s",
+                  boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
+                  <div style={{fontSize:16,marginBottom:1}}>{m.icon}</div>
+                  <div style={{fontSize:9,fontWeight:700}}>{m.label}</div>
+                </button>
+                {hoveredMode===m.id && (
+                  <div style={{position:"absolute",left:0,right:0,top:"100%",marginTop:4,zIndex:200,
+                    background:m.bg,border:`1px solid ${m.color}40`,borderRadius:10,padding:"8px 10px",
+                    boxShadow:"0 8px 24px rgba(0,0,0,0.12)",minWidth:140}}>
+                    <div style={{fontSize:10,color:m.color,fontWeight:700,marginBottom:4}}>{m.label} · {m.holdDesc}</div>
+                    <div style={{fontSize:10,color:T.txtMed,lineHeight:1.4,marginBottom:4}}>{m.desc}</div>
+                    <div style={{fontSize:9,color:T.mut}}>e.g. {m.examples}</div>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
-
-        {/* Row 1: SURGE + SWING + POSITION */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
-          {SIGNAL_MODES.slice(0,3).map(m=>(
-            <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
-              background:horizon===m.id?m.color:T.bgEl,
-              border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
-              color:horizon===m.id?T.bgCard:T.mut,
-              borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
-              boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
-              <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
-              <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
-            </button>
-          ))}
-        </div>
-        {/* Row 2: HOLD + RADAR */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-          {SIGNAL_MODES.slice(3).map(m=>(
-            <button key={m.id} onClick={()=>setHorizon(m.id)} style={{
-              background:horizon===m.id?m.color:T.bgEl,
-              border:`1.5px solid ${horizon===m.id?m.color:T.bdr}`,
-              color:horizon===m.id?T.bgCard:T.mut,
-              borderRadius:12,padding:"9px 4px",cursor:"pointer",transition:"all 0.15s",
-              boxShadow:horizon===m.id?`0 3px 10px ${m.color}40`:"none"}}>
-              <div style={{fontSize:18,marginBottom:2}}>{m.icon}</div>
-              <div style={{fontSize:10,fontWeight:700}}>{m.label}</div>
-            </button>
-          ))}
-        </div>
       </div>
     </>
   );
@@ -891,22 +907,16 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
           <div style={{fontSize:11,fontWeight:700,color:T.mut,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:10}}>
             🔥 Top Conviction
           </div>
-          <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
+          <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:4,WebkitOverflowScrolling:"touch"}}>
             {top4.map(s=>(
               <div key={s.ticker} onClick={()=>onSelect(s)} style={{background:T.bgCard,
-                border:`1px solid ${T.bdrCard}`,borderRadius:14,padding:14,minWidth:148,
+                border:`1px solid ${T.bdrCard}`,borderRadius:12,padding:"10px 14px",minWidth:88,
                 cursor:"pointer",flexShrink:0,boxShadow:T.shadow,transition:"all 0.15s"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor=T.acc;e.currentTarget.style.transform="translateY(-2px)";}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=T.bdrCard;e.currentTarget.style.transform="none";}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                  <span style={{fontSize:16,fontWeight:800,color:T.txt}}>{s.ticker}</span>
-                  <ScoreRing score={s.score||0} size={36}/>
-                </div>
-                <div style={{fontSize:10,color:T.mut,marginBottom:6,fontWeight:500}}>{s.sector||s.tier}</div>
-                <Sparkline data={s.sparkline||[]} color={(s.change||0)>=0?T.grn:T.red} h={28} w={118}/>
-                <div style={{fontSize:12,color:(s.change||0)>=0?T.grn:T.red,fontWeight:700,marginTop:5,
-                  background:(s.change||0)>=0?T.grnLight:T.redLight,padding:"2px 8px",borderRadius:20,display:"inline-block"}}>
-                  {s.change!==undefined?`${(s.change||0)>=0?"+":""}${Number(s.change).toFixed(2)}%`:"—"}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                  <span style={{fontSize:15,fontWeight:800,color:T.txt}}>{s.ticker}</span>
+                  <span style={{fontSize:15,fontWeight:800,color:scoreColor(s.score||0)}}>{s.score||0}</span>
                 </div>
               </div>
             ))}
@@ -916,16 +926,25 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
 
       {/* Search + tier filter */}
       <div style={{padding:"14px 20px 0"}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ticker or company..."
-          style={{width:"100%",background:T.bgCard,border:`1.5px solid ${T.bdr}`,borderRadius:12,
-            padding:"11px 16px",color:T.txt,fontSize:13,boxSizing:"border-box",outline:"none",
-            fontFamily:"inherit",boxShadow:T.shadow,marginBottom:10}}
-          onFocus={e=>e.target.style.borderColor=T.acc}
-          onBlur={e=>e.target.style.borderColor=T.bdr}/>
         <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6,WebkitOverflowScrolling:"touch"}}>
+          <button onClick={()=>setShowSearch(v=>{if(v)setSearch("");return !v;})}
+            style={{background:showSearch?T.acc:T.bgEl,border:`1.5px solid ${showSearch?T.acc:T.bdr}`,
+              color:showSearch?T.bgCard:T.mut,borderRadius:20,padding:"7px 14px",fontSize:14,fontWeight:600,
+              cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,transition:"all 0.15s",
+              boxShadow:showSearch?`0 2px 8px ${T.acc}30`:"none"}}>
+            🔍
+          </button>
           {tiers.map(t=><Chip key={t} label={t} active={filter===t} onClick={()=>setFilter(t)}
             color={t!=="ALL"?tierColor(t):T.acc}/>)}
         </div>
+        {showSearch&&(
+          <input ref={searchRef} value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search ticker or company..."
+            style={{width:"100%",background:T.bgCard,border:`1.5px solid ${T.bdr}`,borderRadius:12,
+              padding:"11px 16px",color:T.txt,fontSize:13,boxSizing:"border-box",outline:"none",
+              fontFamily:"inherit",boxShadow:T.shadow,marginTop:10,marginBottom:6}}
+            onFocus={e=>e.target.style.borderColor=T.acc}
+            onBlur={e=>e.target.style.borderColor=T.bdr}/>
+        )}
       </div>
 
       {/* Signal list */}
@@ -1019,21 +1038,23 @@ const NewsScreen = ({data,loading})=>{
         {loading?<><LoadingPulse lines={4}/></>
         :!hasData?<EmptyState icon="📰" title="No live news loaded"
             subtitle={`Requires FINNHUB_API_KEY in server environment.\n\nThe backend fetches Finnhub company news for all watchlist tickers every 5 minutes.\n\nTest: ${API_BASE}/api/news`}/>
-        :data.map((n,i)=>(
-          <div key={i} style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:14,
+        :data.map((n,i)=>{
+          const sent=n.sentiment||"neutral";
+          const sentColor=sent==="bull"?T.grn:sent==="bear"?T.red:T.amb;
+          const sentBg=sent==="bull"?T.grnLight:sent==="bear"?T.redLight:T.ambLight;
+          return (
+          <div key={i} style={{background:sentBg,border:`1px solid ${sentColor}40`,borderRadius:14,
             padding:16,marginBottom:10,boxShadow:T.shadow,
-            borderLeft:`3px solid ${n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.dim}`}}>
+            borderLeft:`3px solid ${sentColor}`}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
               <div style={{display:"flex",gap:7,alignItems:"center"}}>
-                <span style={{fontSize:14,fontWeight:800,
-                  color:n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.mut}}>
+                <span style={{fontSize:14,fontWeight:800,color:sentColor}}>
                   {n.ticker||n.keyword||""}
                 </span>
                 <span style={{fontSize:9,padding:"2px 7px",borderRadius:20,fontWeight:700,
-                  background:n.sentiment==="bull"?T.grnLight:n.sentiment==="bear"?T.redLight:T.bgEl,
-                  color:n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.mut,
-                  border:`1px solid ${n.sentiment==="bull"?T.grn:n.sentiment==="bear"?T.red:T.dim}30`}}>
-                  {(n.sentiment||"neutral").toUpperCase()}
+                  background:sentBg,color:sentColor,
+                  border:`1px solid ${sentColor}50`}}>
+                  {sent.toUpperCase()}
                 </span>
               </div>
               <span style={{fontSize:10,color:T.dim}}>{n.time||n.published?.slice(0,10)||""}</span>
@@ -1041,7 +1062,7 @@ const NewsScreen = ({data,loading})=>{
             <div style={{fontSize:13,color:T.txt,lineHeight:1.5,marginBottom:5}}>{n.headline||n.title||""}</div>
             <div style={{fontSize:11,color:T.dim}}>{n.source||""}</div>
           </div>
-        ))}
+        );})}
       </div>
     </StickyScreen>
   );
@@ -1283,6 +1304,8 @@ const PaperScreen = () => {
   const [positions,setPositions]   = useState([]);
   const [trades,setTrades]         = useState([]);
   const [summary,setSummary]       = useState(null);
+  const [ledger,setLedger]         = useState([]);
+  const [monthly,setMonthly]       = useState([]);
   const [tab,setTab]               = useState("overview");
   const [loading,setLoading]       = useState(true);
   const [modeFilter,setModeFilter] = useState("ALL");
@@ -1290,16 +1313,20 @@ const PaperScreen = () => {
   useEffect(()=>{
     const load = async () => {
       setLoading(true);
-      const [pf,pos,tr,sm] = await Promise.all([
+      const [pf,pos,tr,sm,lg,mo] = await Promise.all([
         api.get("/api/paper/portfolios"),
         api.get("/api/paper/positions"),
         api.get("/api/paper/trades?limit=50"),
         api.get("/api/paper/summary"),
+        api.get("/api/paper/ledger?limit=100"),
+        api.get("/api/paper/monthly"),
       ]);
       if(pf?.portfolios) setPortfolios(pf.portfolios);
       if(pos?.positions) setPositions(pos.positions);
       if(tr?.trades)     setTrades(tr.trades);
       if(sm)             setSummary(sm);
+      if(lg?.entries)    setLedger(lg.entries);
+      if(mo?.reports)    setMonthly(mo.reports);
       setLoading(false);
     };
     load();
@@ -1321,11 +1348,13 @@ const PaperScreen = () => {
   return (
     <StickyScreen header={
       <div style={{background:T.bgCard,padding:"20px 20px 0"}}>
-        <div style={{fontSize:11,color:T.acc,letterSpacing:"0.12em",textTransform:"uppercase",fontWeight:700}}>BigTrades</div>
+        <div style={{fontSize:11,color:T.acc,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700}}>Portfolio</div>
         <div style={{fontSize:24,fontWeight:800,color:T.txt,marginBottom:14}}>Paper Trading</div>
         {summary && (
           <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:14,WebkitOverflowScrolling:"touch"}}>
             {[
+              ["Regime", summary.macro_regime||"—", summary.macro_regime==="RISK_ON"?T.grn:summary.macro_regime==="RISK_OFF"?T.red:T.amb],
+              ["Capital", `$${(summary.paper_capital||10000).toLocaleString()}`, T.acc],
               ["Total PnL", `${summary.total_realised_pnl>=0?"+":""}$${Math.abs(summary.total_realised_pnl||0).toFixed(0)}`, summary.total_realised_pnl>=0?T.grn:T.red],
               ["Win Rate", `${summary.overall_win_rate||0}%`, T.acc],
               ["Trades", summary.total_trades||0, T.txt],
@@ -1339,7 +1368,7 @@ const PaperScreen = () => {
           </div>
         )}
         <div style={{display:"flex",borderTop:`1px solid ${T.bdr}`,margin:"0 -20px"}}>
-          {[["overview","Portfolios"],["positions","Open"],["trades","Closed"],["analytics","Analytics"]].map(([k,l])=>(
+          {[["overview","Portfolios"],["positions","Open"],["trades","Closed"],["ledger","Ledger"],["monthly","Monthly"],["analytics","Analytics"]].map(([k,l])=>(
             <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"12px 4px",fontSize:11,fontWeight:700,
               cursor:"pointer",background:"none",border:"none",
               borderBottom:tab===k?`2.5px solid ${T.acc}`:"2.5px solid transparent",
@@ -1411,7 +1440,7 @@ const PaperScreen = () => {
         {tab==="positions" && (
           loading ? <LoadingPulse/> :
           filteredPos.length===0
-            ? <EmptyState icon="📭" title="No open positions" subtitle="Paper trades open automatically when signals score above mode threshold during market hours."/>
+            ? <EmptyState icon="📭" title="No open positions" subtitle="Trades open when conviction exceeds dynamic regime thresholds ($10k capital per mode)."/>
             : filteredPos.map(pos=>{
                 const m = SIGNAL_MODES.find(x=>x.id===pos.signal_mode)||{icon:"",color:T.acc,bg:T.accLight};
                 return (
@@ -1420,7 +1449,7 @@ const PaperScreen = () => {
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                       <div>
                         <div style={{display:"flex",gap:7,alignItems:"center"}}>
-                          <span style={{fontSize:18,fontWeight:800,color:T.txt}}>{pos.ticker}</span>
+                          <span style={{fontSize:18,fontWeight:800,color:T.txt}}>{pos.direction==="SHORT"?"↓":"↑"} {pos.ticker}</span>
                           <span style={{fontSize:10,background:m.bg,color:m.color,padding:"2px 8px",borderRadius:20,fontWeight:700}}>{m.icon} {pos.signal_mode}</span>
                         </div>
                         <div style={{fontSize:11,color:T.mut,marginTop:3}}>
@@ -1468,7 +1497,7 @@ const PaperScreen = () => {
                     padding:14,marginBottom:10,boxShadow:T.shadow}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                       <div style={{display:"flex",gap:7,alignItems:"center"}}>
-                        <span style={{fontSize:16,fontWeight:800,color:T.txt}}>{tr.ticker}</span>
+                        <span style={{fontSize:16,fontWeight:800,color:T.txt}}>{tr.direction==="SHORT"?"↓":"↑"} {tr.ticker}</span>
                         <span style={{fontSize:9,background:m.bg||T.accLight,color:m.color||T.acc,
                           padding:"2px 7px",borderRadius:20,fontWeight:700}}>{m.icon} {tr.signal_mode}</span>
                       </div>
@@ -1495,6 +1524,52 @@ const PaperScreen = () => {
               })
         )}
 
+        {tab==="ledger" && (
+          loading ? <LoadingPulse/> :
+          ledger.length===0
+            ? <EmptyState icon="📒" title="No ledger entries" subtitle="Cash movements appear here when paper trades open or close."/>
+            : ledger.map(e=>(
+                <div key={e.id} style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:12,
+                  padding:12,marginBottom:8,fontSize:11}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontWeight:700,color:T.txt}}>{e.entry_type} {e.ticker||""}</span>
+                    <span style={{color:T.mut}}>{e.ts?.slice(0,16)}</span>
+                  </div>
+                  <div style={{color:T.mut}}>{e.signal_mode} · {e.direction||"LONG"} · Bal ${(e.balance_after||0).toFixed(0)}</div>
+                  {(e.debit>0||e.credit>0) && <div style={{marginTop:4,color:e.credit>0?T.grn:T.red}}>
+                    {e.debit>0?`−$${e.debit.toFixed(0)}`:""} {e.credit>0?`+$${e.credit.toFixed(0)}`:""}
+                    {e.pnl!=null?` · PnL $${e.pnl.toFixed(2)}`:""}
+                  </div>}
+                </div>
+              ))
+        )}
+
+        {tab==="monthly" && (
+          loading ? <LoadingPulse/> :
+          monthly.length===0
+            ? <EmptyState icon="📅" title="No monthly reports yet" subtitle="Reports generate on the 1st of each month with PnL and learning lessons."/>
+            : monthly.map(r=>(
+                <div key={r.period_month} style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:14,
+                  padding:16,marginBottom:12,boxShadow:T.shadow}}>
+                  <div style={{fontSize:14,fontWeight:800,color:T.txt,marginBottom:8}}>{r.period_month}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                    {[["PnL",`${r.total_pnl_pct>=0?"+":""}${r.total_pnl_pct||0}%`,r.total_pnl_pct>=0?T.grn:T.red],
+                      ["Preserved",`${r.capital_preserved||0}%`,T.acc],
+                      ["Trades",r.trades_closed||0,T.txt],
+                      ["Win Rate",`${r.win_rate||0}%`,T.grn]].map(([l,v,c])=>(
+                      <div key={l} style={{background:T.bgEl,borderRadius:8,padding:"8px 10px"}}>
+                        <div style={{fontSize:9,color:T.dim}}>{l}</div>
+                        <div style={{fontSize:12,fontWeight:700,color:c}}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {(r.lessons||[]).map((lesson,i)=>(
+                    <div key={i} style={{fontSize:11,color:T.txtMed,lineHeight:1.5,marginBottom:4}}>• {lesson}</div>
+                  ))}
+                </div>
+              ))
+        )}
+
         {tab==="analytics" && (
           <div>
             <div style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:14,padding:16,marginBottom:12,boxShadow:T.shadow}}>
@@ -1513,7 +1588,7 @@ const PaperScreen = () => {
                   style={{display:"flex",alignItems:"center",justifyContent:"space-between",
                     padding:"10px 0",borderBottom:`1px solid ${T.bdr}`,textDecoration:"none"}}>
                   <span style={{fontSize:12,color:T.txt}}>{label}</span>
-                  <span style={{fontSize:10,color,background:`${color}15`,padding:"3px 8px",borderRadius:20,fontWeight:600}}>Open →</span>
+                  <span style={{fontSize:10,color:color,background:`${color}15`,padding:"3px 8px",borderRadius:20,fontWeight:600}}>Open →</span>
                 </a>
               ))}
             </div>
@@ -1563,6 +1638,7 @@ export default function App() {
   const [mode,setMode]           = useState("SWING");
   const [signals,setSignals]     = useState([]);
   const [congress,setCongress]   = useState([]);
+  const [congressLoading,setCongressLoading] = useState(false);
   const [news,setNews]           = useState([]);
   const [market,setMarket]       = useState({});
   const [loading,setLoading]     = useState(true);
@@ -1575,12 +1651,33 @@ export default function App() {
 
   const showToast=useCallback((msg)=>{setToast(msg);setTimeout(()=>setToast(null),3500);},[]);
 
+  const congressFromSignals=useMemo(()=>{
+    const seen=new Set(),out=[];
+    for(const s of signals){
+      for(const t of (s.congress_trades||[])){
+        const key=`${t.member||""}-${t.ticker||""}-${t.date||""}`;
+        if(!seen.has(key)){seen.add(key);out.push(t);}
+      }
+    }
+    return out;
+  },[signals]);
+  const congressDisplay=congress.length?congress:congressFromSignals;
+
+  const fetchCongress=useCallback(async()=>{
+    setCongressLoading(true);
+    const c=await api.get("/api/congress");
+    if(c?.trades) setCongress(c.trades);
+    setCongressLoading(false);
+  },[]);
+
   const handleWsMessage=useCallback((msg)=>{
     if(msg.type==="initial_load"&&msg.data?.length){
       setSignals(msg.data); setLoading(false);
     } else if(msg.type==="signal_update"&&msg.data?.ticker){
       setSignals(prev=>{
-        const idx=prev.findIndex(s=>s.ticker===msg.data.ticker);
+        const idx=prev.findIndex(s=>
+          s.ticker===msg.data.ticker&&
+          (s.signal_mode||"SWING")===(msg.data.signal_mode||"SWING"));
         if(idx>=0){const n=[...prev];n[idx]=msg.data;return n;}
         return [msg.data,...prev];
       });
@@ -1621,9 +1718,9 @@ export default function App() {
         api.get("/api/market"),
       ]);
       if(sig?.signals?.length) setSignals(sig.signals);
-      if(cong?.trades?.length) setCongress(cong.trades);
+      if(cong?.trades) setCongress(cong.trades);
       if(nws?.catalysts?.length) setNews(nws.catalysts);
-      if(mkt?.vix) setMarket(mkt);
+      if(mkt != null && mkt.vix != null) setMarket(mkt);
       setLoading(false);
     };
     load();
@@ -1647,14 +1744,18 @@ export default function App() {
       timerRef.current = setTimeout(async()=>{
         await fetchSignals();
         api.get("/api/news").then(n=>n?.catalysts?.length&&setNews(n.catalysts));
-        api.get("/api/market").then(m=>m?.vix&&setMarket(m));
-        api.get("/api/congress").then(c=>c?.trades?.length&&setCongress(c.trades));
+        api.get("/api/market").then(m=>m != null && m.vix != null && setMarket(m));
+        api.get("/api/congress").then(c=>{if(c?.trades) setCongress(c.trades);});
         tick(); // reschedule — picks up new market-open status each time
       }, isMarketOpen() ? MARKET_MS : OFFHOURS_MS);
     };
     tick();
     return()=>clearTimeout(timerRef.current);
   },[mode,fetchSignals]);
+
+  useEffect(()=>{
+    if(screen==="congress") fetchCongress();
+  },[screen,fetchCongress]);
 
   return (
     <div style={{background:T.bg,minHeight:"100vh",maxWidth:430,margin:"0 auto",
@@ -1663,7 +1764,7 @@ export default function App() {
       <div style={{height:"env(safe-area-inset-top,0px)",background:T.bgCard}}/>
 
       {screen==="home"      &&<HomeScreen signals={signals} loading={loading} connected={connected} onSelect={setSelected} market={market} horizon={horizon} setHorizon={setHorizon} onManualRefresh={handleManualRefresh} refreshing={refreshing}/>}
-      {screen==="congress"  &&<CongressScreen data={congress} loading={loading}/>}
+      {screen==="congress"  &&<CongressScreen data={congressDisplay} loading={congressLoading||loading}/>}
       {screen==="news"      &&<NewsScreen data={news} loading={loading}/>}
       {screen==="paper"     &&<PaperScreen/>}
       {screen==="settings"  &&<SettingsScreen connected={connected} onSettingsSaved={()=>showToast("✓ Settings saved")}/>}
