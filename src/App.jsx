@@ -99,10 +99,19 @@ function useWS(onMsg) {
   const connect=useCallback(()=>{
     try {
       ws.current=new WebSocket(`${WS_BASE}/ws`);
-      ws.current.onopen=()=>{ setConnected(true); const p=setInterval(()=>ws.current?.readyState===1&&ws.current.send("ping"),25000); ws.current._p=p; };
+      ws.current.onopen=()=>{ setConnected(true);
+        // #region agent log
+        fetch('http://127.0.0.1:7563/ingest/ffd7a113-a8bd-4db1-979a-ab94cb6829aa',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c2a025'},body:JSON.stringify({sessionId:'c2a025',hypothesisId:'H5',location:'App.jsx:useWS',message:'ws connected',data:{wsBase:WS_BASE},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        const p=setInterval(()=>ws.current?.readyState===1&&ws.current.send("ping"),25000); ws.current._p=p; };
       ws.current.onmessage=e=>{ try{onMsg(JSON.parse(e.data));}catch{} };
       ws.current.onclose=()=>{ setConnected(false); clearInterval(ws.current?._p); timer.current=setTimeout(connect,3000); };
-      ws.current.onerror=()=>ws.current?.close();
+      ws.current.onerror=()=>{
+        // #region agent log
+        fetch('http://127.0.0.1:7563/ingest/ffd7a113-a8bd-4db1-979a-ab94cb6829aa',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c2a025'},body:JSON.stringify({sessionId:'c2a025',hypothesisId:'H5',location:'App.jsx:useWS',message:'ws error',data:{wsBase:WS_BASE},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        ws.current?.close();
+      };
     } catch { timer.current=setTimeout(connect,5000); }
   },[onMsg]);
   useEffect(()=>{ connect(); return()=>{ clearTimeout(timer.current); ws.current?.close(); }; },[connect]);
@@ -149,25 +158,28 @@ const tierColor  = t => ({NANO:T.red,SMALL:T.amb,MID:T.acc,LARGE:T.grn,ETF:T.pur
 const tierBg     = t => ({NANO:T.redLight,SMALL:T.ambLight,MID:T.accLight,LARGE:T.grnLight,ETF:T.purLight}[t]||T.bgEl);
 
 // ─── MARKET HOURS UTILITY ─────────────────────────────────────────────────────
-// Strategy B: detect off-hours so the UI can show staleness banner + manual refresh
-const ET_OFFSET_MS = -5 * 60 * 60 * 1000; // ET is UTC-5 (approximation; DST ignored, safe for UX)
 function getNowET() {
-  const now = new Date();
-  return new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + ET_OFFSET_MS);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      hour: "numeric",
+      minute: "numeric",
+      hour12: false,
+    }).formatToParts(new Date()).map(p => [p.type, p.value])
+  );
+  const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const day = dayMap[parts.weekday] ?? 0;
+  const h = parseInt(parts.hour, 10);
+  const m = parseInt(parts.minute, 10);
+  return { day, h, m, minuteOfDay: h * 60 + m };
 }
 function isMarketOpen() {
-  const et = getNowET();
-  const day = et.getDay(); // 0=Sun, 6=Sat
-  const h = et.getHours(), m = et.getMinutes();
-  const minuteOfDay = h * 60 + m;
-  return day >= 1 && day <= 5 && minuteOfDay >= 570 && minuteOfDay < 960; // 9:30–16:00 ET Mon-Fri
+  const { day, minuteOfDay } = getNowET();
+  return day >= 1 && day <= 5 && minuteOfDay >= 570 && minuteOfDay < 960;
 }
 function getNextMarketOpen() {
-  const et = getNowET();
-  const day = et.getDay();
-  const h = et.getHours(), m = et.getMinutes();
-  const minuteOfDay = h * 60 + m;
-  // Calculate days until next Monday (or today if weekday before open)
+  const { day, minuteOfDay } = getNowET();
   if (day === 0) return "Monday 9:30 AM ET";
   if (day === 6) return "Monday 9:30 AM ET";
   if (day >= 1 && day <= 5 && minuteOfDay < 570) return "Today 9:30 AM ET";
@@ -962,22 +974,35 @@ const HomeScreen = ({signals,loading,connected,onSelect,market,horizon,setHorizo
 };
 
 // ─── CONGRESS SCREEN ─────────────────────────────────────────────────────────
-const CongressScreen = ({data,loading})=>{
+const CongressScreen = ({data,loading,meta,healthOk})=>{
   const hasData=data&&data.length>0;
+  const subtitle=meta?.source||"Capitol Trades BFF + FMP";
   const header=(
     <div style={{padding:"20px 20px 14px"}}>
       <div style={{fontSize:11,color:T.acc,letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700}}>Intelligence</div>
       <div style={{fontSize:24,fontWeight:800,color:T.txt}}>Congressional Trades</div>
       <div style={{fontSize:12,color:T.mut,marginTop:2}}>
-        {hasData?`${data.length} trades · Capitol Trades + Finnhub`:"STOCK Act disclosures · Live feed"}
+        {hasData?`${data.length} trades · ${subtitle}`:"STOCK Act disclosures · Live feed"}
       </div>
     </div>
   );
+  const emptySubtitle=()=>{
+    if(!healthOk) return `Cannot reach API — start backend with npm run dev:backend (port 3001).\n\nTest: ${API_BASE}/api/congress`;
+    if(meta?.message) return meta.message;
+    if(meta?.status==="stale"&&meta?.fetched_at) return `Showing cached trades from ${fmtRelTime(meta.fetched_at)||meta.fetched_at}`;
+    return `Congress data refreshes every 45 minutes from Capitol Trades BFF and FMP.\n\nTest: ${API_BASE}/api/congress`;
+  };
   return (
     <StickyScreen header={header}>
       <div style={{padding:"0 20px 80px"}}>
+        {meta?.stale&&hasData&&(
+          <div style={{background:T.ambLight,border:`1px solid ${T.amb}30`,borderRadius:12,
+            padding:"11px 14px",marginBottom:12,marginTop:14,fontSize:12,color:T.amb,lineHeight:1.5}}>
+            Showing cached trades{meta.fetched_at?` from ${fmtRelTime(meta.fetched_at)||meta.fetched_at}`:""} — {meta.message||"source temporarily rate limited"}
+          </div>
+        )}
         <div style={{background:T.ambLight,border:`1px solid ${T.amb}30`,borderRadius:12,
-          padding:"11px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"center",marginTop:14}}>
+          padding:"11px 14px",marginBottom:16,display:"flex",gap:10,alignItems:"center",marginTop:meta?.stale&&hasData?0:14}}>
           <span>🏛</span>
           <span style={{fontSize:12,color:T.amb,lineHeight:1.5,fontWeight:500}}>
             Members disclose within 45 days. Committee-relevant buys have historically preceded major price moves.
@@ -985,7 +1010,7 @@ const CongressScreen = ({data,loading})=>{
         </div>
         {loading?<><LoadingPulse/><LoadingPulse/></>
         :!hasData?<EmptyState icon="🏛" title="No congressional trades loaded"
-            subtitle={`Requires FINNHUB_API_KEY in server environment.\n\nDebug: ${API_BASE}/api/telegram/debug\nTest congress: ${API_BASE}/api/congress`}/>
+            subtitle={emptySubtitle()}/>
         :data.map((t,i)=>(
           <div key={i} style={{background:T.bgCard,border:`1px solid ${T.bdrCard}`,borderRadius:16,
             padding:16,marginBottom:10,boxShadow:T.shadow}}>
@@ -1638,7 +1663,9 @@ export default function App() {
   const [mode,setMode]           = useState("SWING");
   const [signals,setSignals]     = useState([]);
   const [congress,setCongress]   = useState([]);
+  const [congressMeta,setCongressMeta] = useState(null);
   const [congressLoading,setCongressLoading] = useState(false);
+  const [apiReachable,setApiReachable] = useState(true);
   const [news,setNews]           = useState([]);
   const [market,setMarket]       = useState({});
   const [loading,setLoading]     = useState(true);
@@ -1667,6 +1694,15 @@ export default function App() {
     setCongressLoading(true);
     const c=await api.get("/api/congress");
     if(c?.trades) setCongress(c.trades);
+    if(c) setCongressMeta({
+      source: c.source,
+      stale: c.stale,
+      message: c.message,
+      fetched_at: c.fetched_at,
+      status: c.status,
+      count: c.count,
+    });
+    setApiReachable(!!c);
     setCongressLoading(false);
   },[]);
 
@@ -1717,8 +1753,13 @@ export default function App() {
         api.get("/api/news"),
         api.get("/api/market"),
       ]);
+      // #region agent log
+      fetch('http://127.0.0.1:7563/ingest/ffd7a113-a8bd-4db1-979a-ab94cb6829aa',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'c2a025'},body:JSON.stringify({sessionId:'c2a025',hypothesisId:'H1',location:'App.jsx:load',message:'initial load results',data:{sigCount:sig?.signals?.length??null,sigOk:!!sig,congCount:cong?.trades?.length??null,congOk:!!cong,congSource:cong?.source,nwsCount:nws?.catalysts?.length??null,mktVix:mkt?.vix,mode},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       if(sig?.signals?.length) setSignals(sig.signals);
       if(cong?.trades) setCongress(cong.trades);
+      if(cong) setCongressMeta({source:cong.source,stale:cong.stale,message:cong.message,fetched_at:cong.fetched_at,status:cong.status,count:cong.count});
+      setApiReachable(!!sig||!!cong);
       if(nws?.catalysts?.length) setNews(nws.catalysts);
       if(mkt != null && mkt.vix != null) setMarket(mkt);
       setLoading(false);
@@ -1745,7 +1786,10 @@ export default function App() {
         await fetchSignals();
         api.get("/api/news").then(n=>n?.catalysts?.length&&setNews(n.catalysts));
         api.get("/api/market").then(m=>m != null && m.vix != null && setMarket(m));
-        api.get("/api/congress").then(c=>{if(c?.trades) setCongress(c.trades);});
+        api.get("/api/congress").then(c=>{
+          if(c?.trades) setCongress(c.trades);
+          if(c) setCongressMeta({source:c.source,stale:c.stale,message:c.message,fetched_at:c.fetched_at,status:c.status,count:c.count});
+        });
         tick(); // reschedule — picks up new market-open status each time
       }, isMarketOpen() ? MARKET_MS : OFFHOURS_MS);
     };
@@ -1764,7 +1808,7 @@ export default function App() {
       <div style={{height:"env(safe-area-inset-top,0px)",background:T.bgCard}}/>
 
       {screen==="home"      &&<HomeScreen signals={signals} loading={loading} connected={connected} onSelect={setSelected} market={market} horizon={horizon} setHorizon={setHorizon} onManualRefresh={handleManualRefresh} refreshing={refreshing}/>}
-      {screen==="congress"  &&<CongressScreen data={congressDisplay} loading={congressLoading||loading}/>}
+      {screen==="congress"  &&<CongressScreen data={congressDisplay} loading={congressLoading||loading} meta={congressMeta} healthOk={apiReachable}/>}
       {screen==="news"      &&<NewsScreen data={news} loading={loading}/>}
       {screen==="paper"     &&<PaperScreen/>}
       {screen==="settings"  &&<SettingsScreen connected={connected} onSettingsSaved={()=>showToast("✓ Settings saved")}/>}
